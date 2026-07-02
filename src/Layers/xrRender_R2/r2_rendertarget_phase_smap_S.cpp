@@ -28,7 +28,7 @@ void CRenderTarget::phase_smap_spot(CBackend& cmd_list, light* L)
         nullptr,
         rt_smap_depth
     );
-    const D3D_VIEWPORT viewport = { L->X.S.posX, L->X.S.posY, L->X.S.size, L->X.S.size, 0.f, 1.f };
+    const D3D_VIEWPORT viewport = { float(L->X.S.posX), float(L->X.S.posY), float(L->X.S.size), float(L->X.S.size), 0.f, 1.f };
     cmd_list.SetViewport(viewport);
 
     // Misc		- draw only front-faces //back-faces
@@ -80,7 +80,7 @@ void CRenderTarget::phase_smap_spot_tsh(CBackend& cmd_list, light* L)
         pv++;
         pv->set(float(_w + EPS), EPS, d_Z, d_W, C, p1.x, p0.y);
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->set(EPS, EPS, d_Z, d_W, C, p0.x, p0.y);
         pv++;
         pv->set(EPS, float(_h + EPS), d_Z, d_W, C, p0.x, p1.y);

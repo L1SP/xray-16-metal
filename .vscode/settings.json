@@ -9,5 +9,27 @@
     "editor.formatOnSave": false
   },
   "files.trimTrailingWhitespace": false,
-  "files.insertFinalNewline": true
+  "files.insertFinalNewline": true,
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.default.cppStandard": "c++17",
+  "C_Cpp.default.intelliSenseMode": "macos-clang-arm64",
+  "C_Cpp.default.compilerPath": "/usr/bin/clang++",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/src",
+    "${workspaceFolder}/src/xrCore",
+    "${workspaceFolder}/Externals",
+    "${workspaceFolder}/Externals/tracy/public",
+    "${workspaceFolder}/Externals/imgui",
+    "${workspaceFolder}/sdk/include",
+    "/opt/homebrew/include",
+    "/opt/homebrew/include/SDL2"
+  ],
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/build",
+    "--background-index",
+    "--clang-tidy=false",
+    "--header-insertion=never"
+  ],
+  "C_Cpp.intelliSenseEngine": "disabled"
 }

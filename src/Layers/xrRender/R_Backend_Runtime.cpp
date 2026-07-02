@@ -138,7 +138,7 @@ void CBackend::Invalidate()
 
 void CBackend::set_ClipPlanes(u32 _enable, Fplane* _planes /*=NULL */, u32 count /* =0*/)
 {
-#if defined(USE_DX11) || defined(USE_OGL)
+#if defined(USE_DX11) || defined(USE_OGL) || defined(USE_METAL)
     // TODO: DX11: Implement in the corresponding vertex shaders
     // Use this to set up location, were shader setup code will get data
     // VERIFY(!"CBackend::set_ClipPlanes not implemented!");
@@ -158,10 +158,8 @@ void CBackend::set_ClipPlanes(u32 _enable, Fmatrix* _xform /*=NULL */, u32 fmask
         return;
     if (!_enable)
     {
-#if defined(USE_DX11) || defined(USE_OGL)
-    // TODO: DX11: Implement in the corresponding vertex shaders
-    // Use this to set up location, were shader setup code will get data
-    // VERIFY(!"CBackend::set_ClipPlanes not implemented!");
+#if defined(USE_DX11) || defined(USE_OGL) || defined(USE_METAL)
+    // TODO: Implement in the corresponding vertex shaders
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -358,6 +356,8 @@ void CBackend::set_Textures(STextureList* textures_list)
             CHK_GL(glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0));
         CHK_GL(glBindTexture(GL_TEXTURE_3D, 0));
         CHK_GL(glBindTexture(GL_TEXTURE_CUBE_MAP, 0));
+#elif defined(USE_METAL)
+        // Metal: no per-stage texture binding; slots tracked by state cache
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -381,6 +381,8 @@ void CBackend::set_Textures(STextureList* textures_list)
             CHK_GL(glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0));
         CHK_GL(glBindTexture(GL_TEXTURE_3D, 0));
         CHK_GL(glBindTexture(GL_TEXTURE_CUBE_MAP, 0));
+#elif defined(USE_METAL)
+        // Metal: no per-stage texture binding; slots tracked by state cache
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -450,6 +452,8 @@ void CBackend::SetupStates()
     SSManager.SetMipLODBias(ps_r__tf_Mipbias);
 #elif defined(USE_OGL)
     // TODO: OGL: Implement SetupStates().
+#elif defined(USE_METAL)
+    // METAL TODO: Implement SetupStates().
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -496,7 +500,7 @@ void CBackend::apply_lmaterial()
     VERIFY(RC_dest_sampler == C->destination);
 #if defined(USE_DX11)
     VERIFY(RC_dx11texture == C->type);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     VERIFY(RC_sampler == C->type);
 #else
 #   error No graphics API selected or enabled!

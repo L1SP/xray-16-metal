@@ -53,6 +53,8 @@ SVS::~SVS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -69,6 +71,8 @@ SPS::~SPS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -87,6 +91,8 @@ SGS::~SGS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#   elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -103,6 +109,8 @@ SHS::~SHS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#   elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -119,6 +127,10 @@ SDS::~SDS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#   elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
+#   else
+#       error No graphics API selected or enabled!
 #   endif
 
     RImplementation.Resources->_DeleteDS(this);
@@ -133,6 +145,8 @@ SCS::~SCS()
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#   elif defined(USE_METAL)
+    // TODO: unregister_shader_func(sh) when implemented
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -150,7 +164,11 @@ SPP::~SPP()
 
     RImplementation.Resources->_DeletePP(this);
 }
-#endif // USE_OGL
+#elif defined(USE_METAL)
+SPP::~SPP()
+{
+}
+#endif
 
 
 #if defined(USE_DX11)
@@ -194,6 +212,8 @@ SDeclaration::~SDeclaration()
     }
 #elif defined(USE_OGL)
     glDeleteVertexArrays(1, &dcl);
+#elif defined(USE_METAL)
+    // dcl is a stub; vertex descriptor owned by pipeline state
 #else
 #   error No graphics API selected or enabled!
 #endif

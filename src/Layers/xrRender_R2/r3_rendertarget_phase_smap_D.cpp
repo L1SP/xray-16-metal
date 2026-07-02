@@ -8,7 +8,7 @@ void CRenderTarget::phase_smap_direct(CBackend& cmd_list, light *L, u32 sub_phas
     {
         u_setrt(cmd_list, nullptr, nullptr, nullptr, rt_smap_rain);
         cmd_list.ClearZB(rt_smap_rain, 1.0f);
-        cmd_list.SetViewport({0, 0, rt_smap_rain->dwWidth, rt_smap_rain->dwHeight, 0.0, 1.0});
+        cmd_list.SetViewport({0.f, 0.f, float(rt_smap_rain->dwWidth), float(rt_smap_rain->dwHeight), 0.0, 1.0});
     }
     else
     {

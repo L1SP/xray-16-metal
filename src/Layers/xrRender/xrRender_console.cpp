@@ -317,6 +317,8 @@ public:
         SSManager.SetMaxAnisotropy(val);
 #elif defined(USE_OGL)
         // OGL: don't set aniso here because it will be updated after vid restart
+#elif defined(USE_METAL)
+        // METAL: don't set aniso here because it will be updated after vid restart
 #else
 #   error No graphics API selected or enabled!
 #endif

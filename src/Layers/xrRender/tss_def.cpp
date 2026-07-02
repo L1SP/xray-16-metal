@@ -35,7 +35,7 @@ void SimulatorStates::record(ID3DState*& state)
 #elif defined(USE_DX11)
     // VERIFY(!"SimulatorStates::record not implemented!");
     state = ID3DState::Create(*this);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     state = ID3DState::Create();
     for (SimulatorStates::State& S : States)
     {
@@ -494,5 +494,5 @@ void SimulatorStates::UpdateDesc(D3D_SAMPLER_DESC descArray[D3D_COMMONSHADER_SAM
     }
 }
 
-#endif // !USE_DX9 && !USE_OGL
+#endif // !USE_DX9 && !USE_OGL && !USE_METAL
 } // namespace xray::render::RENDER_NAMESPACE

@@ -182,6 +182,11 @@ struct ShaderTypeTraits<SVS>
     using HWShaderType = ID3DVertexShader*;
     using BufferType = DWORD const*;
     using ResultType = HRESULT;
+#elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = void*;
+    using BufferType = void*;
+    using ResultType = bool;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -228,6 +233,9 @@ struct ShaderTypeTraits<SVS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_VERTEX_SHADER>(buffer, size, name);
+#elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -253,6 +261,11 @@ struct ShaderTypeTraits<SPS>
     using HWShaderType = ID3DPixelShader*;
     using BufferType = DWORD const*;
     using ResultType = HRESULT;
+#elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = void*;
+    using BufferType = void*;
+    using ResultType = bool;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -313,6 +326,9 @@ struct ShaderTypeTraits<SPS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_FRAGMENT_SHADER>(buffer, size, name);
+#elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #else
 #       error No graphics API selected or enabled!
 #endif
@@ -338,6 +354,11 @@ struct ShaderTypeTraits<SGS>
     using HWShaderType = GLuint;
     using BufferType = pcstr*;
     using ResultType = std::pair<char, GLuint>;
+#   elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = u32;
+    using BufferType = void*;
+    using ResultType = bool;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -385,6 +406,9 @@ struct ShaderTypeTraits<SGS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_GEOMETRY_SHADER>(buffer, size, name);
+#   elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -410,6 +434,11 @@ struct ShaderTypeTraits<SHS>
     using HWShaderType = GLuint;
     using BufferType = pcstr*;
     using ResultType = std::pair<char, GLuint>;
+#   elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = u32;
+    using BufferType = void*;
+    using ResultType = bool;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -440,6 +469,9 @@ struct ShaderTypeTraits<SHS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_TESS_CONTROL_SHADER>(buffer, size, name);
+#   elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -465,6 +497,11 @@ struct ShaderTypeTraits<SDS>
     using HWShaderType = GLuint;
     using BufferType = pcstr*;
     using ResultType = std::pair<char, GLuint>;
+#elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = u32;
+    using BufferType = void*;
+    using ResultType = bool;
 #   else
 #       error No graphics API selected or enabled!
 #endif
@@ -495,6 +532,9 @@ struct ShaderTypeTraits<SDS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_TESS_EVALUATION_SHADER>(buffer, size, name);
+#   elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -520,6 +560,11 @@ struct ShaderTypeTraits<SCS>
     using HWShaderType = GLuint;
     using BufferType = pcstr*;
     using ResultType = std::pair<char, GLuint>;
+#   elif defined(USE_METAL)
+    using LinkageType = void*;
+    using HWShaderType = u32;
+    using BufferType = void*;
+    using ResultType = bool;
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -567,6 +612,9 @@ struct ShaderTypeTraits<SCS>
             res = GLUseBinary(buffer, size, linkage, name);
         else
             res = GLCompileShader<GL_COMPUTE_SHADER>(buffer, size, name);
+#elif defined(USE_METAL)
+        UNUSED(buffer); UNUSED(size); UNUSED(linkage); UNUSED(name);
+        res = true;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -688,7 +736,7 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
 #   else
         flags |= D3DXSHADER_PACKMATRIX_ROWMAJOR | (xrDebug::DebuggerIsPresent() ? D3DXSHADER_DEBUG : 0);
 #   endif
-#elif !defined(USE_OGL)
+#elif !defined(USE_OGL) && !defined(USE_METAL)
 #   ifdef NDEBUG
         flags |= D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #   else

@@ -65,7 +65,7 @@ void CRenderTarget::draw_rain(CBackend& cmd_list, light& RainSetup)
             0.0f, 0.0f, fRange, 0.0f,
             view_dimX / 2.f + view_sx + fTexelOffs, view_dimY / 2.f + view_sy + fTexelOffs, fBias, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust =
         {
             view_dimX / 2.f, 0.0f, 0.0f, 0.0f,
@@ -168,7 +168,7 @@ void CRenderTarget::draw_rain(CBackend& cmd_list, light& RainSetup)
         pv++;
         pv->set(3, -1, d_Z, d_W, C, 2, 1, 2*scale_X, scale_X);
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->set(-1, -1, d_Z, d_W, C, 0, 0, 0, 2*scale_X);
         pv++;
         pv->set(-1, 3, d_Z, d_W, C, 0, 2, 0, 0);
@@ -292,6 +292,8 @@ void CRenderTarget::draw_rain(CBackend& cmd_list, light& RainSetup)
                 cmd_list.StateManager.SetSampleMask(0xffffffff);
 #elif defined(USE_OGL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL) 
+                VERIFY(!"Only optimized MSAA is supported in Metal"); // METAL TODO: check if this is correct, need to implement optimized MSAA for Metal
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -349,6 +351,8 @@ void CRenderTarget::draw_rain(CBackend& cmd_list, light& RainSetup)
                 cmd_list.StateManager.SetSampleMask(0xffffffff);
 #elif defined(USE_OGL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL)
+                VERIFY(!"Only optimized MSAA is supported in Metal"); // METAL TODO: check if this is correct, need to implement optimized MSAA for Metal
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -396,6 +400,8 @@ void CRenderTarget::draw_rain(CBackend& cmd_list, light& RainSetup)
                 cmd_list.StateManager.SetSampleMask(0xffffffff);
 #elif defined(USE_OGL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL)
+                VERIFY(!"Only optimized MSAA is supported in Metal"); // METAL TODO: check if this is correct, need to implement optimized MSAA for Metal
 #else
 #   error No graphics API selected or enabled!
 #endif

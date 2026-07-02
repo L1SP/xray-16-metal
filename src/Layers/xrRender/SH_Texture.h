@@ -55,6 +55,15 @@ public:
         rstVertex = rstPixel + mtMaxPixelShaderTextures,
         rstGeometry = rstVertex + mtMaxVertexShaderTextures,
     };
+#elif defined(USE_METAL)
+    //	Since Metal doesn't differentiate between stages,
+    //	distance between enum values should be the max for that stage.
+    enum ResourceShaderType
+    {
+        rstPixel = 0,	//	Default texture offset
+        rstVertex = rstPixel + mtMaxPixelShaderTextures,
+        rstGeometry = rstVertex + mtMaxVertexShaderTextures,
+    };
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -80,6 +89,9 @@ public:
 #elif defined(USE_OGL)
     void surface_set(GLenum target, GLuint surf);
     [[nodiscard]] GLuint surface_get() const;
+#elif defined(USE_METAL)
+    void surface_set(int target, u32 surf);
+    [[nodiscard]] u32 surface_get() const;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -121,7 +133,7 @@ public:
             Load();
         return reinterpret_cast<ImTextureID>(m_pSRView);
     }
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     ImTextureID GetImTextureID()
     {
         if (!flags.bLoaded)
@@ -191,13 +203,19 @@ private:
 #elif defined(USE_OGL)
     GLuint pSurface;
     GLuint pBuffer;
-    // Sequence data
     xr_vector<GLuint> seqDATA;
-    // Description
     GLint m_width;
     GLint m_height;
     GLuint desc_cache;
     GLenum desc;
+#elif defined(USE_METAL)
+    u32 pSurface;
+    u32 pBuffer;
+    xr_vector<u32> seqDATA;
+    int m_width;
+    int m_height;
+    u32 desc_cache;
+    u32 desc;
 #else
 #   error No graphics API selected or enabled!
 #endif

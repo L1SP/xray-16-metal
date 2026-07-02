@@ -402,6 +402,10 @@ public:
     BackendAPI GetBackendAPI() const override { return IRender::BackendAPI::OpenGL; }
     u32 get_dx_level() override { return /*HW.pDevice1?0x000A0001:*/0x000A0000; }
     pcstr getShaderPath() override { return "gl\\"; }
+#elif defined(USE_METAL)
+    BackendAPI GetBackendAPI() const override { return IRender::BackendAPI::Metal; }
+    u32 get_dx_level() override { return /*HW.pDevice1?0x000A0001:*/0x000A0000; }
+    pcstr getShaderPath() override { return "mtl\\"; }
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -425,6 +429,8 @@ public:
     ID3DBaseTexture* texture_load(pcstr fname, u32& msize);
 #elif defined(USE_OGL)
     GLuint           texture_load(pcstr fname, u32& msize, GLenum& ret_desc);
+#elif defined(USE_METAL)
+    u32           texture_load(pcstr fname, u32& msize, int& ret_desc);
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -481,6 +487,7 @@ public:
 
     // Main
     void OnCameraUpdated() override;
+    void ApplyGamma() override;
 
     void Calculate() override;
     void Render() override;
@@ -514,7 +521,7 @@ public:
 private:
 #if defined(USE_DX11)
     xr_vector<D3D_SHADER_MACRO> m_ShaderOptions;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     xr_string m_ShaderOptions;
 #else
 #   error No graphics API selected or enabled!

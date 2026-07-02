@@ -33,6 +33,16 @@ target_link_libraries(xr_3da
     xrGame
 )
 
+if (APPLE)
+    target_link_libraries(xr_3da PRIVATE xrRender_METAL)
+    target_link_libraries(xr_3da PRIVATE
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework QuartzCore"
+        "-framework Cocoa"
+    )
+endif()
+
 set_target_properties(xr_3da PROPERTIES
     PREFIX ""
 )

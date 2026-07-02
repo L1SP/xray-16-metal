@@ -119,7 +119,11 @@ inline int GetExceptionCode()
 inline void convert_path_separators(char * path);
 
 #include <inttypes.h>
+#ifndef BOOL
+#ifndef OBJC_BOOL_DEFINED
 typedef int32_t BOOL;
+#endif
+#endif
 typedef uint16_t WORD;
 typedef uint32_t DWORD;
 typedef int32_t LONG;

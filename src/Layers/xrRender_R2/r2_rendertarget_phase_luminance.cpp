@@ -84,7 +84,7 @@ void CRenderTarget::phase_luminance()
         pv->uv2.set(b_2.x, a_2.y);
         pv->uv3.set(b_3.x, a_3.y);
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->p.set(eps, eps, eps, 1.f);
         pv->uv0.set(a_0.x, a_0.y);
         pv->uv1.set(a_1.x, a_1.y);
@@ -152,7 +152,7 @@ void CRenderTarget::phase_luminance()
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(b[t].x, a[t].y, a[t + 8].y, b[t + 8].x); // xy/yx	- right+up
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->p.set(eps, eps, eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, a[t].y, a[t + 8].y, a[t + 8].x); // xy/yx	- left+up
@@ -213,7 +213,7 @@ void CRenderTarget::phase_luminance()
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(b[t].x, a[t].y, a[t + 8].y, b[t + 8].x); // xy/yx	- right+up
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->p.set(eps, eps, eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, a[t].y, a[t + 8].y, a[t + 8].x); // xy/yx	- left+up

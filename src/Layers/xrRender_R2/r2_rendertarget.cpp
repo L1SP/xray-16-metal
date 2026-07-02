@@ -62,6 +62,11 @@ void CRenderTarget::u_stencil_optimize(CBackend& cmd_list, eStencilOptimizeMode 
     VERIFY(RImplementation.o.nvstencil);
     VERIFY(!"CRenderTarget::u_stencil_optimize no implemented");
     UNUSED(eSOM);
+#elif defined(USE_METAL)
+    //	METAL TODO: should we implement stencil optimization?
+    VERIFY(RImplementation.o.nvstencil);
+    VERIFY(!"CRenderTarget::u_stencil_optimize no implemented");
+    UNUSED(eSOM);
 #else
 #   error No graphics API selected or enabled!
 #endif // USE_DX11
@@ -78,7 +83,7 @@ void CRenderTarget::u_compute_texgen_screen(CBackend& cmd_list, Fmatrix& m_Texge
         0.0f, 0.0f, 1.0f, 0.0f,
         0.5f, 0.5f, 0.0f, 1.0f
 };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     Fmatrix m_TexelAdjust =
     {
         0.5f, 0.0f, 0.0f, 0.0f,
@@ -103,6 +108,8 @@ void CRenderTarget::u_compute_texgen_jitter(CBackend& cmd_list, Fmatrix& m_Texge
 #if defined(USE_DX11)
         0.0f, -0.5f, 0.0f, 0.0f,
 #elif defined(USE_OGL)
+        0.0f, 0.5f, 0.0f, 0.0f,
+#elif defined(USE_METAL)
         0.0f, 0.5f, 0.0f, 0.0f,
 #else
 #   error No graphics API selected or enabled!
@@ -200,7 +207,6 @@ void manually_assign_texture(ref_shader& shader, pcstr textureName, pcstr render
 CRenderTarget::CRenderTarget()
 {
     ZoneScoped;
-
     static constexpr pcstr SAMPLE_DEFS[] = { "0", "1", "2", "3", "4", "5", "6", "7" };
 
     if (!strstr(Core.Params, "-smap"))
@@ -686,6 +692,10 @@ CRenderTarget::CRenderTarget()
         s_postprocess_msaa.create(&b_postprocess_msaa, "r2" DELIMITER "post");
     }
 
+#if defined(USE_METAL)
+    _create_gamma_pso();
+#endif // USE_METAL
+
     // Menu
     s_menu.create("distort");
     g_menu.create(FVF::F_TL, RImplementation.Vertex.Buffer(), RImplementation.QuadIB);
@@ -701,6 +711,7 @@ CRenderTarget::CRenderTarget()
     //
     dwWidth[RCache.context_id] = Device.dwWidth;
     dwHeight[RCache.context_id] = Device.dwHeight;
+    Log("* CRenderTarget: constructor done");
 }
 
 CRenderTarget::~CRenderTarget()
@@ -727,6 +738,13 @@ CRenderTarget::~CRenderTarget()
 
     t_noise_mipped->surface_set(GL_TEXTURE_2D, 0);
     glDeleteTextures(1, &t_noise_surf_mipped);
+#elif defined(USE_METAL)
+    t_material.destroy();
+    t_LUM_src.destroy();
+    t_LUM_dest.destroy();
+    for (u32 it = 0; it < TEX_jitter_count; it++)
+        t_noise[it].destroy();
+    t_noise_mipped.destroy();
 #else
 #   error No graphics API selected or enabled!
 #endif

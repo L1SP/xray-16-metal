@@ -142,7 +142,8 @@ public:
         D3D9,
         D3D10,
         D3D11,
-        OpenGL
+        OpenGL,
+        Metal
     };
 
     enum ScreenshotMode : u32
@@ -387,6 +388,7 @@ public:
     virtual bool GetForceGPU_REF() = 0;
     virtual u32 GetCacheStatPolys() = 0;
     virtual void OnCameraUpdated() = 0;
+    virtual void ApplyGamma() {} // No-op by default; Metal backend uses shader-based gamma
     virtual void Begin() = 0;
     virtual void Clear() = 0;
     virtual void End() = 0;

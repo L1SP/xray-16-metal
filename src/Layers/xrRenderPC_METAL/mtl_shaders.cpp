@@ -1,0 +1,805 @@
+#include "stdafx.h"
+#include "r2.h"
+
+#include "Layers/xrRender/ShaderResourceTraits.h"
+#include "xrCore/FileCRC32.h"
+#include "Layers/xrRender/r_constants.h"
+
+#include <glslang/Include/glslang_c_interface.h>
+#include <glslang/Public/resource_limits_c.h>
+#include <spirv_cross_c.h>
+
+namespace
+{
+xr_map<u32, void*> s_shaderFuncs;
+u32 s_nextShaderID = 1;
+
+void register_shader_func(void* func, u32& outID)
+{
+    outID = s_nextShaderID++;
+    s_shaderFuncs[outID] = func;
+}
+}
+
+namespace xray::render::RENDER_NAMESPACE
+{
+void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 destination);
+
+static void patch_io_locations(xr_string& s);
+static void strip_texel_offsets(xr_string& src);
+
+void* lookup_shader_func(u32 id)
+{
+    auto it = s_shaderFuncs.find(id);
+    return it != s_shaderFuncs.end() ? it->second : nullptr;
+}
+
+static bool s_glslangInitialized = false;
+
+static void ensure_glslang()
+{
+    if (!s_glslangInitialized)
+    {
+        s_glslangInitialized = glslang_initialize_process() != 0;
+    }
+}
+
+// --- glslang include callbacks ---
+static glsl_include_result_t* include_local(void* ctx, const char* header_name,
+    const char* includer_name, size_t include_depth)
+{
+    xr_string header(header_name);
+    // Normalize forward slashes to backslashes (engine convention)
+    for (auto& c : header)
+        if (c == '/') c = '\\';
+
+    // Construct relative path: "mtl\" + header
+    string_path relPath;
+    strconcat(sizeof(relPath), relPath, RImplementation.getShaderPath(), header.c_str());
+    // Open via $game_shaders$ alias
+    Msg("* include_local: header=[%s] relPath=[%s] depth=%zu", header_name, relPath, include_depth);
+    IReader* reader = FS.r_open("$game_shaders$", relPath);
+    if (reader)
+    {
+        size_t size = reader->length();
+        char* data = (char*)malloc(size + 1);
+        CopyMemory(data, reader->pointer(), size);
+        data[size] = '\0';
+        FS.r_close(reader);
+        // Normalize backslashes to forward slashes in included content
+        for (size_t i = 0; i < size; i++)
+            if (data[i] == '\\') data[i] = '/';
+        // Strip texel offsets (non-const offets in *Offset() calls)
+        {
+            xr_string stripped(data);
+            strip_texel_offsets(stripped);
+            patch_io_locations(stripped);
+            xr_free(data);
+            size = stripped.size();
+            data = (char*)malloc(size + 1);
+            CopyMemory(data, stripped.c_str(), size);
+            data[size] = '\0';
+        }
+        auto* result = (glsl_include_result_t*)malloc(sizeof(glsl_include_result_t));
+        result->header_name = strdup(header_name);
+        result->header_data = data;
+        result->header_length = size;
+        return result;
+    }
+    Msg("! include_local: NOT FOUND [%s] depth=%zu from=[%s]", relPath, include_depth, includer_name);
+    return nullptr;
+}
+
+static glsl_include_result_t* include_system(void* ctx, const char* header_name,
+    const char* includer_name, size_t include_depth)
+{
+    return include_local(ctx, header_name, includer_name, include_depth);
+}
+
+static int free_include_result(void* ctx, glsl_include_result_t* result)
+{
+    if (result)
+    {
+        if (result->header_name)
+            free((void*)result->header_name);
+        if (result->header_data)
+            free((void*)result->header_data);
+        free(result);
+    }
+    return 0;
+}
+
+static void add_output_locations(xr_string& source, glslang_stage_t stage)
+{
+    if (stage != GLSLANG_STAGE_VERTEX)
+        return;
+
+    // Find the last closing brace of the _main function output assignment
+    size_t pos = source.rfind("}");
+
+    // Pad output variables: for vertex shaders used with point sprites, add
+    // a dummy PointSize output to satisfy SPIRV-Cross MSL requirements.
+    // Vertex outputs at location 0 and 8 are already defined in p_TL.h etc.
+    // We just need to ensure location(1) is assigned for the gl_PointSize.
+    if (pos != xr_string::npos && pos > 0)
+    {
+        // Insert at the end of the function body but before the closing brace
+        // SPIRV-Cross needs to know gl_PointSize is at location 1
+        // We'll rely on the existing output struct having the right layout
+    }
+}
+
+static void strip_texel_offsets(xr_string& src)
+{
+    // SPIR-V/MSL requires offset arguments to texture* functions to be
+    // compile-time constants. The engine sometimes passes non-const offsets,
+    // so strip them by removing the "Offset" suffix and the last argument.
+    //
+    // textureOffset(sampler, coord, offset)       → texture(sampler, coord)
+    // textureGatherOffset(sampler, coord, offset) → textureGather(sampler, coord)
+    // texelFetchOffset(sampler, coord, lod, offset) → texelFetch(sampler, coord, lod)
+    // textureLodOffset(sampler, coord, lod, offset) → textureLod(sampler, coord, lod)
+
+    static const char* patterns[] = {
+        "textureOffset(",
+        "textureGatherOffset(",
+        "texelFetchOffset(",
+        "textureLodOffset(",
+    };
+
+    for (auto* pat : patterns)
+    {
+        size_t patLen = strlen(pat); // e.g. "textureOffset(" = 15
+        size_t pos = 0;
+        while ((pos = src.find(pat, pos)) != xr_string::npos)
+        {
+            // Remove "Offset" suffix (6 chars before the paren, "Offset(" is last 7 chars)
+            src.erase(pos + patLen - 7, 6);
+            // Now patLen = old patLen - 6, but we don't need it anymore
+            // Remove the LAST argument (the offset — always the last arg)
+            size_t paren = src.find('(', pos);
+            if (paren == xr_string::npos) { pos++; continue; }
+            // Find the last comma inside the parens
+            int depth = 1;
+            size_t lastComma = xr_string::npos;
+            size_t end = paren + 1;
+            while (end < src.size() && depth > 0)
+            {
+                if (src[end] == '(') depth++;
+                else if (src[end] == ')') { if (--depth == 0) break; }
+                else if (src[end] == ',' && depth == 1) lastComma = end;
+                end++;
+            }
+            if (depth == 0 && lastComma != xr_string::npos)
+            {
+                // Remove from lastComma to closing paren
+                src.erase(lastComma, end - lastComma);
+            }
+            pos = paren + 1;
+        }
+    }
+}
+
+static void patch_io_locations(xr_string& s)
+{
+    // SPIR-V requires explicit layout(location=...) for all IO variables.
+    // The engine's PS fragment output is always SV_Target at location 0.
+    // The VS/PS IO struct members already use #define-based locations
+    // (COLOR=0, TEXCOORD0=8, etc.) from common.h.
+    // We only need to patch:
+    //   1. "out vec4 SV_Target" → "layout(location=0) out vec4 SV_Target"
+    //   2. "out vec4 SV_Target0" → "layout(location=0) out vec4 SV_Target0" (MSAA variant)
+    //   3. "out vec4 SV_Target1" → "layout(location=1) out vec4 SV_Target1" (MSAA variant)
+    size_t pos = 0;
+    while ((pos = s.find("out vec4 SV_Target", pos)) != xr_string::npos)
+    {
+        // Check if it already has a layout qualifier
+        size_t lineStart = s.rfind('\n', pos);
+        if (lineStart == xr_string::npos) lineStart = 0;
+        else lineStart++;
+        xr_string prefix = s.substr(lineStart, pos - lineStart);
+        if (prefix.find("layout") != xr_string::npos)
+        {
+            pos += 18; // skip past "out vec4 SV_Target"
+            continue;
+        }
+        // Determine location number: SV_Target0=0, SV_Target1=1, SV_Target=0
+        int loc = 0;
+        if (s.size() > pos + 18 && s[pos + 18] == '1')
+            loc = 1;
+        s.insert(pos, "layout(location=" + std::to_string(loc) + ") ");
+        pos += 22 + (loc > 0 ? 1 : 0); // skip past the inserted text
+    }
+}
+
+static xr_string resolve_includes(const xr_string& source, int depth = 0)
+{
+    if (depth > 20)
+        return source;
+
+    // Track preprocessor conditional depth (#if, #ifdef, #ifndef → #endif)
+    // Only resolve includes at depth 0 (unconditional)
+    int ifDepth = 0;
+
+    xr_string result;
+    size_t pos = 0;
+    size_t len = source.size();
+
+    while (pos < len)
+    {
+        size_t hashPos = source.find('#', pos);
+        if (hashPos == xr_string::npos || hashPos + 9 > len)
+            break;
+
+        // Extract the directive text
+        size_t lineEnd = source.find('\n', hashPos);
+        if (lineEnd == xr_string::npos) lineEnd = len;
+        xr_string line = source.substr(hashPos, lineEnd - hashPos);
+
+        // Track conditional depth
+        if (line.size() >= 2)
+        {
+            // Skip whitespace after #
+            size_t dp = 1;
+            while (dp < line.size() && (line[dp] == ' ' || line[dp] == '\t')) dp++;
+            xr_string directive = line.substr(dp);
+
+            if (directive.size() >= 2 && directive.substr(0, 2) == "if")
+                ifDepth++;
+            else if (directive.size() >= 5 && directive.substr(0, 5) == "endif")
+            {
+                if (ifDepth > 0) ifDepth--;
+            }
+            else if (ifDepth == 0 && directive.size() >= 7 && directive.substr(0, 7) == "include")
+            {
+                // Unconditional include — resolve it
+                result += source.substr(pos, hashPos - pos);
+
+                // Find the header name between quotes
+                size_t q1 = line.find('"', dp + 7);
+                if (q1 != xr_string::npos)
+                {
+                    size_t q2 = line.find('"', q1 + 1);
+                    if (q2 != xr_string::npos)
+                    {
+                        xr_string headerName = line.substr(q1 + 1, q2 - q1 - 1);
+
+                        // Normalize forward slashes to backslashes
+                        for (auto& c : headerName)
+                            if (c == '/') c = '\\';
+
+                        string_path relPath;
+                        strconcat(sizeof(relPath), relPath,
+                            RImplementation.getShaderPath(), headerName.c_str());
+
+                        IReader* reader = FS.r_open("$game_shaders$", relPath);
+                        if (reader)
+                        {
+                            xr_string content(
+                                static_cast<const char*>(reader->pointer()),
+                                reader->length());
+                            FS.r_close(reader);
+
+                            for (auto& c : content)
+                                if (c == '\\') c = '/';
+
+                            content = resolve_includes(content, depth + 1);
+                            result += content;
+                        }
+
+                        pos = lineEnd + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Move to next line
+        result += source.substr(pos, lineEnd - pos + 1);
+        pos = lineEnd + 1;
+    }
+
+    result += source.substr(pos);
+    return result;
+}
+
+static xr_string build_full_glsl(pcstr pTarget, pcstr resolvedSource, pcstr shaderOptions)
+{
+    xr_string src;
+    src += "#version 420\n";
+    src += "#extension GL_GOOGLE_include_directive : enable\n";
+    if (shaderOptions && shaderOptions[0])
+        src += shaderOptions;
+    src += resolvedSource;
+    // Pre-resolve #include directives manually (bypasses glslang include callbacks)
+    src = resolve_includes(src);
+    strip_texel_offsets(src);
+    patch_io_locations(src);
+    return src;
+}
+
+void CRender::addShaderOption(const char* name, const char* value)
+{
+    m_ShaderOptions += "#define ";
+    m_ShaderOptions += name;
+    m_ShaderOptions += " ";
+    m_ShaderOptions += value;
+    m_ShaderOptions += "\n";
+}
+
+static bool glsl_to_spirv(const char* glslSource, glslang_stage_t stage, xr_vector<unsigned int>& spirv);
+static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string& outMSL, bool isVertex);
+static bool compile_msl(MTL::Device* device, const char* source, const char* entryPoint, MTL::Function*& outFunction);
+static glslang_stage_t target_to_stage(pcstr pTarget);
+
+static u32 create_shader(pcstr pTarget, void*& result, pcstr resolvedSource, pcstr shaderOptions)
+{
+    auto* device = static_cast<MTL::Device*>(HW.m_device);
+
+    // Build full GLSL with #version 420 + options
+    xr_string fullGLSL;
+    try
+    {
+        fullGLSL = build_full_glsl(pTarget, resolvedSource, shaderOptions);
+    }
+    catch (const std::exception& e)
+    {
+        Msg("! create_shader build_full_glsl exception: %s target=%s", e.what(), pTarget);
+        return 0;
+    }
+
+    // GLSL → SPIR-V
+    glslang_stage_t stage = target_to_stage(pTarget);
+    xr_vector<unsigned int> spirv;
+    if (!glsl_to_spirv(fullGLSL.c_str(), stage, spirv))
+    {
+        return 0;
+    }
+
+    // SPIR-V → MSL
+    xr_string mslSource;
+    if (!spirv_to_msl(spirv.data(), spirv.size(), mslSource, pTarget[0] == 'v'))
+    {
+        Msg("! Failed to convert SPIR-V to MSL (target=%s)", pTarget);
+        return 0;
+    }
+
+    // Populate constant table from MSL (active uniforms only)
+    auto* shVS = (pTarget[0] == 'v') ? (SVS*&)result : nullptr;
+    auto* shPS = (pTarget[0] == 'p') ? (SPS*&)result : nullptr;
+    if (shVS || shPS)
+    {
+        setup_constants_from_msl(
+            (shVS ? shVS->constants : shPS->constants),
+            mslSource.c_str(),
+            (shVS ? RC_dest_vertex : RC_dest_pixel)
+        );
+    }
+
+    // MSL → Metal function
+    // SPIRV-Cross generates "main0" as entry point name for vertex/fragment shaders
+    MTL::Function* func = nullptr;
+    if (!compile_msl(device, mslSource.c_str(), "main0", func))
+    {
+        Msg("! Failed to compile MSL shader (target=%s)", pTarget);
+        return 0;
+    }
+
+    if (!func)
+        return 0;
+
+    if (pTarget[0] == 'p')
+    {
+        auto* sh = (SPS*&)result;
+        u32 id;
+        register_shader_func(func, id);
+        sh->sh = id;
+        sh->constants.parse(resolvedSource ? const_cast<pstr>(resolvedSource) : nullptr, RC_dest_pixel);
+        // Re-apply MSL bindings AFTER parse() to override pre-seeded GL-style indices
+        setup_constants_from_msl(sh->constants, mslSource.c_str(), RC_dest_pixel);
+    }
+    else if (pTarget[0] == 'v')
+    {
+        auto* sh = (SVS*&)result;
+        u32 id;
+        register_shader_func(func, id);
+        sh->sh = id;
+        sh->constants.parse(resolvedSource ? const_cast<pstr>(resolvedSource) : nullptr, RC_dest_vertex);
+        // Re-apply MSL bindings AFTER parse() to override pre-seeded GL-style indices
+        setup_constants_from_msl(sh->constants, mslSource.c_str(), RC_dest_vertex);
+    }
+    else
+        return 0;
+
+    return 1;
+}
+
+HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
+    pcstr pTarget, u32 Flags, void*& result)
+{
+    // Pass raw source (with #include directives) — glslang's include callbacks handle resolution
+    xr_string source(static_cast<const char*>(fs->pointer()), fs->length());
+    create_shader(pTarget, result, source.c_str(), m_ShaderOptions.c_str());
+    return S_OK;
+}
+
+static bool glsl_to_spirv(const char* glslSource, glslang_stage_t stage, xr_vector<unsigned int>& spirv)
+{
+    ensure_glslang();
+    if (!s_glslangInitialized)
+        return false;
+
+    xr_string source(glslSource);
+    add_output_locations(source, stage);
+
+    glslang_input_t input{};
+    input.language = GLSLANG_SOURCE_GLSL;
+    input.stage = stage;
+    input.client = GLSLANG_CLIENT_NONE;
+    input.client_version = GLSLANG_TARGET_OPENGL_450;
+    input.target_language = GLSLANG_TARGET_SPV;
+    input.target_language_version = GLSLANG_TARGET_SPV_1_3;
+    input.code = source.c_str();
+    input.default_version = 420;
+    input.default_profile = GLSLANG_NO_PROFILE;
+    input.force_default_version_and_profile = 0;
+    input.forward_compatible = 1;
+    input.messages = GLSLANG_MSG_DEFAULT_BIT;
+    input.resource = glslang_default_resource();
+    input.callbacks.include_local = include_local;
+    input.callbacks.include_system = include_system;
+    input.callbacks.free_include_result = free_include_result;
+
+    glslang_shader_t* shader = glslang_shader_create(&input);
+    if (!shader)
+        return false;
+
+    if (!glslang_shader_preprocess(shader, &input))
+    {
+        Msg("! glslang preprocess error: %s", glslang_shader_get_info_log(shader));
+        glslang_shader_delete(shader);
+        return false;
+    }
+
+    if (!glslang_shader_parse(shader, &input))
+    {
+        Msg("! glslang parse error: %s", glslang_shader_get_info_log(shader));
+        glslang_shader_delete(shader);
+        return false;
+    }
+
+    glslang_program_t* program = glslang_program_create();
+    glslang_program_add_shader(program, shader);
+
+    if (!glslang_program_link(program, GLSLANG_MSG_DEFAULT_BIT))
+    {
+        Msg("! glslang link error: %s", glslang_program_get_info_log(program));
+        glslang_program_delete(program);
+        glslang_shader_delete(shader);
+        return false;
+    }
+
+    glslang_program_SPIRV_generate(program, stage);
+
+    size_t count = glslang_program_SPIRV_get_size(program);
+    spirv.resize(count);
+    glslang_program_SPIRV_get(program, spirv.data());
+
+    glslang_program_delete(program);
+    glslang_shader_delete(shader);
+    return true;
+}
+
+// Global consistent buffer index mapping across all shaders (per stage)
+// Different shaders may assign different [[buffer(N)]] to the same named constant
+// (e.g. c_brightness is buffer 0 in postprocess.ps but buffer 1 in postprocess_cm.ps).
+// We remap all shaders to use the same global index per constant name.
+static xr_map<xr_string, u32> g_psBufferRemap;
+static u32 g_psBufferRemapNext = 0;
+static xr_map<xr_string, u32> g_vsBufferRemap;
+static u32 g_vsBufferRemapNext = 0;
+
+static void remap_msl_buffers(xr_string& msl, bool isVertex)
+{
+    auto& globalMap = isVertex ? g_vsBufferRemap : g_psBufferRemap;
+    auto& nextIndex = isVertex ? g_vsBufferRemapNext : g_psBufferRemapNext;
+
+    const char* p = strstr(msl.c_str(), "main0(");
+    if (!p) return;
+    p += 6;
+    int depth = 1;
+    const char* end = p;
+    while (*end && depth > 0)
+    {
+        if (*end == '(') depth++;
+        else if (*end == ')') depth--;
+        if (depth > 0) end++;
+    }
+    if (depth != 0) return;
+
+    xr_string params(p, end - p);
+
+    // Phase 1: collect all constant buffer params and their old → new index mapping
+    struct BufRemap { xr_string name; u32 oldIdx; u32 newIdx; };
+    xr_vector<BufRemap> remaps;
+
+    size_t pos = 0;
+    while (pos < params.length())
+    {
+        size_t cpos = params.find("constant ", pos);
+        if (cpos == xr_string::npos) break;
+
+        size_t tstart = cpos + 9;
+        while (tstart < params.length() && (params[tstart] == ' ' || params[tstart] == '\t'))
+            tstart++;
+
+        size_t amp = params.find('&', tstart);
+        if (amp == xr_string::npos) { pos = cpos + 9; continue; }
+
+        size_t nstart = amp + 1;
+        while (nstart < params.length() && (params[nstart] == ' ' || params[nstart] == '&'))
+            nstart++;
+        size_t nend = nstart;
+        while (nend < params.length() && params[nend] != ' ' && params[nend] != ',' && params[nend] != ')' && params[nend] != '[')
+            nend++;
+        xr_string name = params.substr(nstart, nend - nstart);
+        if (name.empty()) { pos = cpos + 9; continue; }
+
+        size_t bufpos = params.find("[[buffer(", nend);
+        if (bufpos != xr_string::npos)
+        {
+            const char* num_start = params.c_str() + bufpos + 9;
+            char* endp = nullptr;
+            u32 oldIdx = (u32)strtoul(num_start, &endp, 10);
+
+            auto it = globalMap.find(name);
+            u32 newIdx;
+            if (it == globalMap.end())
+            {
+                newIdx = nextIndex++;
+                globalMap[name] = newIdx;
+            }
+            else
+            {
+                newIdx = it->second;
+            }
+
+            if (newIdx != oldIdx)
+                remaps.push_back({std::move(name), oldIdx, newIdx});
+        }
+        pos = cpos + 9;
+    }
+
+    // Phase 2: apply each remap using per-variable replacement.
+    // Replacing `varname [[buffer(N)]]` instead of bare `[[buffer(N)]]` avoids
+    // cross-contamination when multiple variables share the same old index.
+    for (const auto& r : remaps)
+    {
+        char oldBuf[256], newBuf[256];
+        snprintf(oldBuf, sizeof(oldBuf), "%s [[buffer(%u)]]", r.name.c_str(), r.oldIdx);
+        snprintf(newBuf, sizeof(newBuf), "%s [[buffer(%u)]]", r.name.c_str(), r.newIdx);
+        xr_string oldStr(oldBuf);
+        xr_string newStr(newBuf);
+        size_t rp = 0;
+        while ((rp = msl.find(oldStr, rp)) != xr_string::npos)
+        {
+            msl.replace(rp, oldStr.length(), newStr);
+            rp += newStr.length();
+        }
+    }
+}
+
+static void fix_msl_params(xr_string& msl)
+{
+    // Fix common SPIRV-Cross MSL issues:
+    // 1. Change "thread const texture2d<float>&" to just "texture2d<float>" (Metal texture params are by value)
+    // 2. Change "thread const sampler&" to just "sampler"
+    size_t pos = 0;
+    while ((pos = msl.find("thread const texture", pos)) != xr_string::npos)
+    {
+        size_t end = pos;
+        while (end < msl.size() && msl[end] != '>')
+            ++end;
+        if (end < msl.size())
+            ++end;
+        msl.erase(pos, end - pos);
+        msl.insert(pos, "texture");
+        pos += 7;
+    }
+    pos = 0;
+    while ((pos = msl.find("thread const sampler&", pos)) != xr_string::npos)
+    {
+        msl.erase(pos, 21);
+        msl.insert(pos, "sampler");
+        pos += 7;
+    }
+    // 3. SPIRV-Cross generates "thread const floatNxM&" for uniform matrix/vector
+    //    parameters in static helper functions, but the caller passes "constant floatNxM&"
+    //    from buffer bindings. Metal requires matching address spaces.
+    //    Fix: remove the reference (&) so the parameter is passed by value.
+    //    This eliminates the address space conflict and generates equivalent code
+    //    since these types are small (16-64 bytes).
+    pos = 0;
+    while ((pos = msl.find("thread const float", pos)) != xr_string::npos)
+    {
+        size_t t = pos + 18; // after "thread const float" (18 chars)
+        if (t >= msl.size()) { pos++; continue; }
+        // Check for matrix type: floatNxM (N,M=2-4)
+        bool isMatrix = (msl[t] >= '2' && msl[t] <= '4' && t + 2 < msl.size() &&
+                         msl[t+1] == 'x' && msl[t+2] >= '2' && msl[t+2] <= '4');
+        // Check for vector type: float2, float3, float4 (without x)
+        bool isVector = (msl[t] >= '2' && msl[t] <= '4' &&
+                         (t + 1 >= msl.size() || msl[t+1] != 'x')) &&
+                        (t + 1 < msl.size() && (msl[t+1] == ' ' || msl[t+1] == '&'));
+        if (isMatrix || isVector)
+        {
+            // Find the & after the type name (matrix="4x4"=3 chars, vector="4"=1 char)
+            size_t amp = t + (isMatrix ? 3 : 1);
+            while (amp < msl.size() && msl[amp] == ' ') amp++;
+            if (amp < msl.size() && msl[amp] == '&')
+            {
+                // Remove '&' to make it pass-by-value
+                msl.erase(amp, 1);
+                // Also need to remove 'thread ' before the parameter — only if this
+                // parameter actually has 'thread'. But the 'thread' qualifier is
+                // redundant for by-value params. Remove it.
+                // 'thread ' starts at pos:
+                msl.erase(pos, 7); // remove "thread "
+                pos += 11; // sizeof("const float...")
+                continue;
+            }
+        }
+        pos++;
+    }
+    // 4. Fix "thread const spvUnsafeArray<T,N>&" for array params from constant buffers
+    pos = 0;
+    while ((pos = msl.find("thread const spvUnsafeArray<", pos)) != xr_string::npos)
+    {
+        size_t closeBracket = pos + 28;
+        int depth = 1;
+        while (closeBracket < msl.size() && depth > 0)
+        {
+            if (msl[closeBracket] == '<') depth++;
+            else if (msl[closeBracket] == '>') depth--;
+            closeBracket++;
+        }
+        if (depth == 0)
+        {
+            size_t amp = closeBracket;
+            while (amp < msl.size() && msl[amp] == ' ') amp++;
+            if (amp < msl.size() && msl[amp] == '&')
+                msl.erase(amp, 1);
+            msl.erase(pos, 7);
+        }
+        else
+            pos++;
+    }
+}
+
+static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string& outMSL, bool isVertex)
+{
+    spvc_context ctx{};
+    if (spvc_context_create(&ctx) != SPVC_SUCCESS)
+        return false;
+
+    spvc_parsed_ir ir{};
+    if (spvc_context_parse_spirv(ctx, spirv, word_count, &ir) != SPVC_SUCCESS)
+    {
+        spvc_context_destroy(ctx);
+        return false;
+    }
+
+    spvc_compiler compiler{};
+    if (spvc_context_create_compiler(ctx, SPVC_BACKEND_MSL, ir, SPVC_CAPTURE_MODE_COPY, &compiler) != SPVC_SUCCESS)
+    {
+        spvc_context_destroy(ctx);
+        return false;
+    }
+
+    {
+        spvc_compiler_options opts{};
+        if (spvc_compiler_create_compiler_options(compiler, &opts) == SPVC_SUCCESS)
+        {
+            spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_PLATFORM, 2);
+            spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_VERSION, 30000);
+            spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, true);
+            spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, true);
+            spvc_compiler_install_compiler_options(compiler, opts);
+        }
+    }
+
+    {
+        spvc_resources resources{};
+        if (spvc_compiler_create_shader_resources(compiler, &resources) == SPVC_SUCCESS)
+        {
+            const spvc_reflected_resource* list = nullptr;
+            size_t count = 0;
+
+            if (!isVertex)
+            {
+                spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, &list, &count);
+                for (size_t i = 0; i < count; i++)
+                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationLocation, (unsigned)i);
+            }
+
+            spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &list, &count);
+            for (size_t i = 0; i < count; i++)
+                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
+            const size_t sampledImageCount = count;
+
+            spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count);
+            for (size_t i = 0; i < count; i++)
+                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)(i + sampledImageCount));
+        }
+    }
+
+    const char* source = nullptr;
+    if (spvc_compiler_compile(compiler, &source) != SPVC_SUCCESS)
+    {
+        const char* err = spvc_context_get_last_error_string(ctx);
+        if (!err) err = "unknown error";
+        Msg("! SPIRV-Cross MSL compile error: %s", err);
+        spvc_context_destroy(ctx);
+        return false;
+    }
+
+    outMSL = source;
+    fix_msl_params(outMSL);
+    remap_msl_buffers(outMSL, isVertex);
+
+    spvc_context_destroy(ctx);
+    return true;
+}
+
+static glslang_stage_t target_to_stage(pcstr pTarget)
+{
+    if (pTarget[0] == 'v')
+        return GLSLANG_STAGE_VERTEX;
+    if (pTarget[0] == 'p')
+        return GLSLANG_STAGE_FRAGMENT;
+    if (pTarget[0] == 'g')
+        return GLSLANG_STAGE_GEOMETRY;
+    return GLSLANG_STAGE_VERTEX;
+}
+
+static bool compile_msl(MTL::Device* device, const char* source, const char* entryPoint, MTL::Function*& outFunction)
+{
+    if (!device || !source || !entryPoint)
+        return false;
+
+    NS::Error* error = nullptr;
+    MTL::Library* library = device->newLibrary(NS::String::string(source, NS::UTF8StringEncoding), nullptr, &error);
+
+    if (!library)
+    {
+        if (error)
+        {
+            Msg("! Metal shader compile error: %s", error->localizedDescription()->utf8String());
+            error->release();
+        }
+        return false;
+    }
+
+    outFunction = library->newFunction(NS::String::string(entryPoint, NS::UTF8StringEncoding));
+    library->release();
+
+    if (!outFunction)
+    {
+        Msg("! Metal function '%s' not found in compiled library", entryPoint);
+        return false;
+    }
+
+    return true;
+}
+
+void unregister_shader_func(u32 id)
+{
+    auto it = s_shaderFuncs.find(id);
+    if (it != s_shaderFuncs.end())
+    {
+        static_cast<MTL::Function*>(it->second)->release();
+        s_shaderFuncs.erase(it);
+    }
+}
+
+} // namespace xray::render::RENDER_NAMESPACE

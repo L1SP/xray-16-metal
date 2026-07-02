@@ -86,6 +86,11 @@ void R_sync_point::End()
     q_sync_count = (q_sync_count + 1) % HW.Caps.iGPUNum;
     CHK_DX(EndQuery((ID3DQuery*)q_sync_point[q_sync_count]));
 }
+#elif defined(USE_METAL) // METAL TODO: use MTLCommandBuffer/MTLFence
+void R_sync_point::Create() { q_sync_count = 0; }
+void R_sync_point::Destroy() {}
+bool R_sync_point::Wait(u32, u64) { return true; }
+void R_sync_point::End() { q_sync_count = (q_sync_count + 1) % HW.Caps.iGPUNum; }
 #else
 #   error No graphics API selected or enabled!
 #endif

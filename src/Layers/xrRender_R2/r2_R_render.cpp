@@ -16,12 +16,12 @@ void CRender::RenderMenu()
     TracyD3D11Zone(HW.profiler_ctx, "render_menu");
 #endif
     PIX_EVENT(render_menu);
+
     //	Globals
     RCache.set_CullMode(CULL_CCW);
     RCache.set_Stencil(FALSE);
     RCache.set_ColorWriteEnable();
 
-    // Main Render
     {
         Target->u_setrt(RCache, Target->rt_Generic_0, nullptr, nullptr, Target->rt_Base_Depth); // LDR RT
         g_pGamePersistent->OnRenderPPUI_main(); // PP-UI
@@ -34,6 +34,16 @@ void CRender::RenderMenu()
     }
 
     // Actual Display
+#if defined(USE_METAL)
+    HW.EndEncoding();
+    if (auto* oldBuf = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer))
+        oldBuf->commit();
+    if (auto* q = static_cast<MTL::CommandQueue*>(HW.m_cmdQueue))
+        HW.m_currentCmdBuffer = q->commandBuffer();
+    HW.m_currentEncoder = nullptr;
+    HW.m_currentRPD = nullptr;
+
+#endif
     Target->u_setrt(RCache, Device.dwWidth, Device.dwHeight, Target->get_base_rt(), 0, 0, Target->get_base_zb());
     RCache.set_Shader(Target->s_menu);
     RCache.set_Geometry(Target->g_menu);
@@ -58,7 +68,7 @@ void CRender::RenderMenu()
     pv++;
     pv->set(float(_w + EPS), EPS, d_Z, d_W, C, p1.x, p0.y);
     pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     pv->set(EPS, EPS, d_Z, d_W, C, p0.x, p0.y);
     pv++;
     pv->set(EPS, float(_h + EPS), d_Z, d_W, C, p0.x, p1.y);
@@ -406,4 +416,17 @@ void CRender::BeforeWorldRender() {}
 
 // После рендера мира и пост-эффектов --#SM+#--
 void CRender::AfterWorldRender() {}
+
+#if defined(USE_METAL)
+void CRender::ApplyGamma()
+{
+    if (!Target)
+        return;
+
+    // Gamma correction is applied in phase_flip() via the Metal gamma PSO
+    // during CHW::Present(). Nothing to do here.
+}
+#else
+void CRender::ApplyGamma() {}
+#endif
 } // namespace xray::render::RENDER_NAMESPACE

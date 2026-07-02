@@ -19,7 +19,7 @@ void CRenderTarget::mark_msaa_edges()
     pv++;
     pv->set( 1,  1, d_Z, d_W, C, 1, 0, 0, 0);
     pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     pv->set(-1, -1,   0, d_W, C, 0, 0, 0, 0);
     pv++;
     pv->set(-1,  1, d_Z, d_W, C, 0, 1, 0, 0);
@@ -34,7 +34,7 @@ void CRenderTarget::mark_msaa_edges()
     RImplementation.Vertex.Unlock(4, g_combine_2UV->vb_stride);
 #if defined(USE_DX11) // XXX: remove this difference
     u_setrt(RCache, nullptr, nullptr, nullptr, rt_MSAADepth);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     u_setrt(RCache, Device.dwWidth, Device.dwHeight, 0, 0, 0, rt_MSAADepth->pZRT);
 #endif
     RCache.set_Element(s_mark_msaa_edges->E[0]);

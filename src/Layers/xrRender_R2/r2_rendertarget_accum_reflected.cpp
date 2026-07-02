@@ -41,7 +41,7 @@ void CRenderTarget::accum_reflected(CBackend& cmd_list, light* L)
             0.0f, 0.0f, 1.0f, 0.0f,
             0.5f + o_w, 0.5f + o_h, 0.0f, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust =
         {
             0.5f, 0.0f, 0.0f, 0.0f,

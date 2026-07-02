@@ -113,7 +113,7 @@ void CRenderTarget::accum_spot(CBackend& cmd_list, light* L)
             0.0f, 0.0f, fRange, 0.0f,
             view_dim / 2.f + view_sx + fTexelOffs, view_dim / 2.f + view_sy + fTexelOffs, fBias, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust =
         {
             view_dim / 2.f, 0.0f, 0.0f, 0.0f,
@@ -143,7 +143,7 @@ void CRenderTarget::accum_spot(CBackend& cmd_list, light* L)
             0.0f, 0.0f, fRange, 0.0f,
             view_dim / 2.f + view_sx + fTexelOffs, view_dim / 2.f + view_sy + fTexelOffs, fBias, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust2 =
         {
             view_dim / 2.f, 0.0f, 0.0f, 0.0f,
@@ -247,6 +247,8 @@ void CRenderTarget::accum_spot(CBackend& cmd_list, light* L)
                 cmd_list.StateManager.SetSampleMask(0xffffffff);
 #elif defined(USE_OGL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL)
+                VERIFY(!"Only optimized MSAA is supported in Metal"); // METAL TODO: check if this is correct, need to implement optimized MSAA for Metal
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -300,6 +302,8 @@ void CRenderTarget::accum_spot(CBackend& cmd_list, light* L)
                 cmd_list.StateManager.SetSampleMask(0xffffffff);
 #elif defined(USE_OGL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL)
+                VERIFY(!"Only optimized MSAA is supported in Metal"); // METAL TODO: check if this is correct, need to implement optimized MSAA for Metal
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -376,7 +380,7 @@ void CRenderTarget::accum_volumetric(CBackend& cmd_list, light* L)
             0.0f, 0.0f, fRange, 0.0f,
             view_dim / 2.f + view_sx + fTexelOffs, view_dim / 2.f + view_sy + fTexelOffs, fBias, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust =
         {
             view_dim / 2.f, 0.0f, 0.0f, 0.0f,
@@ -407,7 +411,7 @@ void CRenderTarget::accum_volumetric(CBackend& cmd_list, light* L)
             0.0f, 0.0f, fRange, 0.0f,
             view_dim / 2.f + view_sx + fTexelOffs, view_dim / 2.f + view_sy + fTexelOffs, fBias, 1.0f
         };
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         Fmatrix m_TexelAdjust2 =
         {
             view_dim / 2.f, 0.0f, 0.0f, 0.0f,
@@ -631,6 +635,8 @@ void CRenderTarget::accum_volumetric(CBackend& cmd_list, light* L)
                 }
                 StateManager.SetSampleMask( 0xffffffff );
 #elif defined(USE_OGL)
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+#elif defined(USE_METAL)
                 VERIFY(!"Only optimized MSAA is supported in OpenGL");
 #else
 #   error No graphics API selected or enabled!

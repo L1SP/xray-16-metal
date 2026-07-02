@@ -17,8 +17,17 @@ CTexture* dxUIShader::GetBaseTexture() const
     if (!hShader)
         return nullptr;
 
+    if (!hShader->E[0])
+        return nullptr;
+
+    if (hShader->E[0]->passes.empty())
+        return nullptr;
+
     const SPass& pass = *hShader->E[0]->passes[0];
     if (!pass.T)
+        return nullptr;
+
+    if (!pass.constants)
         return nullptr;
 
     const STextureList& textures = *pass.T;
@@ -26,8 +35,17 @@ CTexture* dxUIShader::GetBaseTexture() const
         return nullptr;
 
     const R_constant* sbase = pass.constants->get(baseTexture)._get();
+    if (!sbase)
+        return nullptr;
 
-    return textures[sbase ? sbase->samp.index : 0].second._get();
+    const u32 targetStage = sbase->samp.index;
+    for (const auto& pair : textures)
+    {
+        if (pair.first == targetStage)
+            return pair.second._get();
+    }
+
+    return nullptr;
 }
 
 xrImTextureData dxUIShader::GetImGuiTextureId()

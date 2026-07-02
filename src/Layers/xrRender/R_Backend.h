@@ -100,6 +100,10 @@ private:
     GLuint pFB;
     GLuint pRT[4];
     GLuint pZB;
+#elif defined(USE_METAL)
+    u32 pFB;
+    u32 pRT[4];
+    u32 pZB;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -128,6 +132,11 @@ private:
     GLuint vs;
     GLuint gs;
     GLuint pp;
+#elif defined(USE_METAL)
+    u32 ps;
+    u32 vs;
+    u32 gs;
+    u32 pp;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -141,7 +150,7 @@ private:
     LPCSTR ds_name;
     LPCSTR cs_name;
 #   endif
-#   ifdef USE_OGL
+#   if defined(USE_OGL) || defined(USE_METAL)
     pcstr pp_name;
 #   endif
 #endif // DEBUG
@@ -254,6 +263,17 @@ public:
 #endif
 
     void Invalidate();
+#if defined(USE_METAL)
+    ICF void InvalidateTextureCache()
+    {
+        for (u32 i = 0; i < CTexture::mtMaxPixelShaderTextures; ++i)
+            textures_ps[i] = nullptr;
+        for (u32 i = 0; i < CTexture::mtMaxVertexShaderTextures; ++i)
+            textures_vs[i] = nullptr;
+        for (u32 i = 0; i < CTexture::mtMaxGeometryShaderTextures; ++i)
+            textures_gs[i] = nullptr;
+    }
+#endif
 
     // API
     IC void set_xform(u32 ID, const Fmatrix& M);
@@ -281,6 +301,13 @@ public:
     IC GLuint get_FB();
     IC GLuint get_RT(u32 ID = 0);
     IC GLuint get_ZB();
+#elif defined(USE_METAL)
+    IC void set_FB(u32 FB = 0);
+    IC void set_RT(u32 RT, u32 ID = 0);
+    IC void set_ZB(u32 ZB);
+    IC u32 get_FB();
+    IC u32 get_RT(u32 ID = 0);
+    IC u32 get_ZB();
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -301,6 +328,14 @@ public:
 
     IC bool ClearRTRect(GLuint rt, const Fcolor& color, size_t numRects, const Irect* rects);
     IC bool ClearZBRect(GLuint zb, float depth, size_t numRects, const Irect* rects);
+#elif defined(USE_METAL)
+    IC void ClearRT(u32 rt, const Fcolor& color);
+
+    IC void ClearZB(u32 zb, float depth);
+    IC void ClearZB(u32 zb, float depth, u8 stencil);
+
+    IC bool ClearRTRect(u32 rt, const Fcolor& color, size_t numRects, const Irect* rects);
+    IC bool ClearZBRect(u32 zb, float depth, size_t numRects, const Irect* rects);
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -311,7 +346,7 @@ public:
         return ClearRTRect(rt->pRT, color, numRects, rects);
     }
 
-#if defined(USE_OGL)
+#if defined(USE_OGL) || defined(USE_METAL)
     ICF void ClearZB(ref_rt& zb, float depth) { ClearZB(zb->pRT, depth);}
     ICF void ClearZB(ref_rt& zb, float depth, u8 stencil) { ClearZB(zb->pRT, depth, stencil);}
     ICF bool ClearZBRect(ref_rt& zb, float depth, size_t numRects, const Irect* rects)
@@ -357,6 +392,8 @@ private:
     ICF void set_PS(ID3DPixelShader* _ps, LPCSTR _n = nullptr);
 #elif defined(USE_OGL)
     ICF void set_PS(GLuint _ps, LPCSTR _n = 0);
+#elif defined(USE_METAL)
+    ICF void set_PS(u32 _ps, LPCSTR _n = 0);
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -378,6 +415,9 @@ private:
 
     ICF void set_PP(GLuint _pp, pcstr _n = nullptr);
     ICF void set_PP(ref_pp& _pp) { set_PP(_pp->pp, _pp->cName.c_str()); }
+    #elif defined(USE_METAL)
+    ICF void set_GS(u32 _gs, LPCSTR _n = nullptr);
+    ICF void set_PP(u32 _pp, pcstr _n = nullptr);
 #   endif
 
     ICF void set_VS(ref_vs& _vs);
@@ -390,6 +430,8 @@ private:
     ICF void set_VS(ID3DVertexShader* _vs, LPCSTR _n = nullptr);
 #elif defined(USE_OGL)
     ICF void set_VS(GLuint _vs, LPCSTR _n = 0);
+#elif defined(USE_METAL)
+    ICF void set_VS(u32 _vs, LPCSTR _n = 0);
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -402,7 +444,7 @@ public:
 #endif
 
 public:
-#if defined(USE_OGL)
+#if defined(USE_OGL) || defined(USE_METAL)
     ICF bool is_TessEnabled() { return false; }
 #elif defined(USE_DX11)
     ICF bool is_TessEnabled();
@@ -420,6 +462,9 @@ public:
     IC void set_Z(u32 _enable);
     IC void set_ZFunc(u32 _func);
     IC void set_AlphaRef(u32 _value);
+#if defined(USE_METAL)
+    IC void set_BlendEnable(bool _enable);
+#endif
     IC void set_ColorWriteEnable(
         u32 _mask = D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE |
             D3DCOLORWRITEENABLE_ALPHA);
@@ -520,6 +565,8 @@ public:
         CHK_DX(HW.get_context(context_id)->FinishCommandList(false, &pCommandList));
         HW.get_context(CHW::IMM_CTX_ID)->ExecuteCommandList(pCommandList, false);
         _RELEASE(pCommandList);
+#elif defined(USE_METAL)
+        // METAL TODO: implement command list submission
 #endif
     }
 
@@ -601,6 +648,10 @@ public:
     dx11StateManager StateManager;
     dx11ShaderResourceStateCache SRVSManager;
 #endif // USE_DX11
+#if defined(USE_METAL)
+private:
+    bool blendEnabled;
+#endif
 };
 #pragma warning(pop)
 

@@ -1,7 +1,4 @@
 {
-  // Use IntelliSense to learn about possible attributes.
-  // Hover to view descriptions of existing attributes.
-  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
     {
@@ -93,6 +90,83 @@
       "preLaunchTask": "Compile",
       "externalConsole": false,
       "MIMode": "gdb"
+    },
+    {
+      "name": "Debug (SoC)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-soc",
+        "-nointro"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: Build",
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Debug (CS)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-cs",
+        "-nointro"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: Build",
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Debug (CoP)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-nointro"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: Build",
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Debug (CoC)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-nointro"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: Build",
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Attach to xr_3da",
+      "type": "lldb",
+      "request": "attach",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug (Metal / CoP)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-metal",
+        "-nointro",
+        "-fsltx",
+        "${input:fsltxPath}"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "Metal: Build All",
+      "internalConsoleOptions": "openOnSessionStart"
     }
   ],
   "inputs": [
@@ -107,6 +181,11 @@
         "ReleaseMasterGold"
       ],
       "default": "ReleaseMasterGold"
+    },
+    {
+      "id": "fsltxPath",
+      "type": "promptString",
+      "description": "Path to .ltx file for Metal"
     }
   ]
 }

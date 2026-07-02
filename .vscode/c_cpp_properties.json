@@ -1,0 +1,29 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "OpenXRay",
+      "compilerPath": "/usr/bin/clang++",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "intelliSenseMode": "macos-clang-arm64",
+      "cppStandard": "c++17",
+      "includePath": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/Externals",
+        "${workspaceFolder}/Externals/tracy/public",
+        "${workspaceFolder}/Externals/imgui",
+        "${workspaceFolder}/sdk/include",
+        "/opt/homebrew/include",
+        "/opt/homebrew/include/SDL2"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/Externals",
+          "${workspaceFolder}/sdk/include"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}

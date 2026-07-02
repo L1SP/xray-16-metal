@@ -31,6 +31,9 @@ public:
     dxPixEventWrapper(const char* name) { HW.BeginPixEvent(name); }
     ~dxPixEventWrapper() { HW.EndPixEvent(); }
 };
+#elif defined(USE_METAL)
+#   define PIX_EVENT(Name) do { } while (false)
+#   define PIX_EVENT_CTX(C,Name) do { } while (false)
 #else
 #   error No graphics API selected or enabled!
 #endif // USE_OGL

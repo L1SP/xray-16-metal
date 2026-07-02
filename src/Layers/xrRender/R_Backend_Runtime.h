@@ -12,6 +12,9 @@
 #elif defined(USE_OGL)
 #include "Layers/xrRenderGL/glR_Backend_Runtime.h"
 #include "Layers/xrRenderGL/glState.h"
+#elif defined(USE_METAL)
+#include "Layers/xrRenderMETAL/mtlR_Backend_Runtime.h"
+#include "Layers/xrRenderMETAL/mtlState.h"
 #endif
 
 namespace xray::render::RENDER_NAMESPACE
@@ -62,6 +65,8 @@ IC const Fmatrix& CBackend::get_xform_project() { return xforms.get_P(); }
 IC ID3DRenderTargetView* CBackend::get_RT(u32 ID)
 #elif defined(USE_OGL)
 IC GLuint CBackend::get_RT(u32 ID)
+#elif defined(USE_METAL)
+IC u32 CBackend::get_RT(u32 ID)
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -75,6 +80,8 @@ IC GLuint CBackend::get_RT(u32 ID)
 IC ID3DDepthStencilView* CBackend::get_ZB()
 #elif defined(USE_OGL)
 IC GLuint CBackend::get_ZB()
+#elif defined(USE_METAL)
+IC u32 CBackend::get_ZB()
 #else
 #   error No graphics API selected or enabled!
 #endif

@@ -137,7 +137,7 @@ void CRenderTarget::phase_bloom()
         pv->uv2.set(b_2.x, a_2.y);
         pv->uv3.set(b_3.x, a_3.y);
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->p.set(EPS, EPS, EPS, 1.f);
         pv->uv0.set(a_0.x, a_0.y);
         pv->uv1.set(a_1.x, a_1.y);
@@ -217,7 +217,7 @@ void CRenderTarget::phase_bloom()
         pv->uv2.set(p1.x + ddw, p0.y - ddh);
         pv->uv3.set(p1.x - ddw, p0.y + ddh);
         pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         pv->p.set(EPS, EPS, EPS, 1.f);
         pv->uv0.set(p0.x - ddw, p0.y - ddh);
         pv->uv1.set(p0.x + ddw, p0.y + ddh);
@@ -328,7 +328,7 @@ void CRenderTarget::phase_bloom()
             pv->uv6.set(1 + a_6.x, a_6.y, a_6.z, 1 + a_6.w);
             pv->uv7.set(1 + a_7.x, a_7.y, a_7.z, 1 + a_7.w);
             pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
             // 1 - LT
             pv->p.set(EPS, EPS, EPS, 1.f);
             pv->uv0.set(a_0.x, a_0.y, 0, 0);
@@ -460,7 +460,7 @@ void CRenderTarget::phase_bloom()
             pv->uv6.set(1 + a_6.x, a_6.y, a_6.z, 1 + a_6.w);
             pv->uv7.set(1 + a_7.x, a_7.y, a_7.z, 1 + a_7.w);
             pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
             // 1 - LT
             pv->p.set(EPS, EPS, EPS, 1.f);
             pv->uv0.set(a_0.x, a_0.y, 0, 0);

@@ -218,6 +218,12 @@ void CBlender_Compile::PassSET_Shaders(pcstr _vs, pcstr _ps, pcstr _gs /*= nullp
 #endif
         dest.vs = RImplementation.Resources->_CreateVS(_vs, flags);
         ctable.merge(&dest.vs->constants);
+#if defined(USE_METAL)
+        // VS merge overwrites samp.index — restore from ps.index
+        for (auto& C : ctable.table)
+            if (C->type == RC_sampler && C->ps.index != 0xFFFF)
+                C->samp.index = C->ps.index;
+#endif
         dest.gs = RImplementation.Resources->_CreateGS(_gs);
         ctable.merge(&dest.gs->constants);
 #ifdef USE_DX11

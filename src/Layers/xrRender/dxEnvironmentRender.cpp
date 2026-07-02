@@ -102,7 +102,7 @@ public:
         // C.r_Sampler_rtf		("s_tonemap",	"$user$tonemap"	);	//. hack
         C.r_dx11Texture("s_tonemap", "$user$tonemap"); //. hack
         C.PassSET_ZB(FALSE, FALSE);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         C.r_Sampler_clf("s_sky0", "$null");
         C.r_Sampler_clf("s_sky1", "$null");
         C.r_Sampler_rtf("s_tonemap", "$user$tonemap"); //. hack
@@ -184,28 +184,34 @@ void dxEnvironmentRender::lerp(CEnvDescriptorMixer& currentEnv, IEnvDescriptorRe
     //. Setup skybox textures, somewhat ugly
     auto e0 = sky_r_textures[0].second->surface_get();
     auto e1 = sky_r_textures[1].second->surface_get();
-#ifdef USE_OGL
+#if defined(USE_OGL)
     tsky0->surface_set(GL_TEXTURE_CUBE_MAP, e0);
     tsky1->surface_set(GL_TEXTURE_CUBE_MAP, e1);
-#else // USE_OGL
+#elif defined(USE_METAL)
+    tsky0->surface_set(0, e0);
+    tsky1->surface_set(0, e1);
+#else // USE_DX11
     tsky0->surface_set(e0);
     _RELEASE(e0);
     tsky1->surface_set(e1);
     _RELEASE(e1);
-#endif // USE_OGL
+#endif
 
     const bool menu_pp = g_pGamePersistent->OnRenderPPUI_query();
     e0 = menu_pp ? 0 : pA->sky_texture_env->surface_get();
     e1 = menu_pp ? 0 : pB->sky_texture_env->surface_get();
-#   ifdef USE_OGL
+#if defined(USE_OGL)
     t_envmap_0->surface_set(GL_TEXTURE_CUBE_MAP, e0);
     t_envmap_1->surface_set(GL_TEXTURE_CUBE_MAP, e1);
-#   else // USE_OGL
+#elif defined(USE_METAL)
+    t_envmap_0->surface_set(0, e0);
+    t_envmap_1->surface_set(0, e1);
+#else // USE_DX11
     t_envmap_0->surface_set(e0);
     _RELEASE(e0);
     t_envmap_1->surface_set(e1);
     _RELEASE(e1);
-#   endif // USE_OGL
+#endif
 
     // ******************** Environment params (setting)
 #if defined(USE_DX9)
@@ -253,7 +259,7 @@ void dxEnvironmentRender::RenderSky(CEnvironment& env)
     RCache.set_Shader(sh_2sky);
 #if defined(USE_DX11)
     RCache.set_Textures(&sky_r_textures);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     if (HW.Caps.geometry.bVTF)
         RCache.set_Textures(&sky_r_textures);
 #else
@@ -402,6 +408,12 @@ void dxEnvironmentRender::OnDeviceDestroy()
     t_envmap_0->surface_set(GL_TEXTURE_CUBE_MAP, 0);
     t_envmap_1->surface_set(GL_TEXTURE_CUBE_MAP, 0);
     tonemap->surface_set(GL_TEXTURE_CUBE_MAP, 0);
+#elif defined(USE_METAL)
+    tsky0->surface_set(0, 0);
+    tsky1->surface_set(0, 0);
+    t_envmap_0->surface_set(0, 0);
+    t_envmap_1->surface_set(0, 0);
+    tonemap->surface_set(0, 0);
 #else
 #   error No graphics API slected or defined!
 #endif

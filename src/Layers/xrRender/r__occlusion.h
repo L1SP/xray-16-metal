@@ -24,6 +24,8 @@ private:
         ID3DQuery* Q;
 #elif defined(USE_OGL)
         GLuint Q;
+#elif defined(USE_METAL)
+        u32 Q;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -39,7 +41,7 @@ private:
 
     Lock render_lock{};
 public:
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(USE_METAL)
     typedef u64 occq_result;
 #elif defined(USE_OGL)
     typedef u32 occq_result;

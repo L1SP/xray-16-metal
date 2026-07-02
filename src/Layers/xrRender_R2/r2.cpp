@@ -83,7 +83,7 @@ static class cl_pos_decompress_params : public R_constant_setup
 #if defined(USE_DX11)
         const float VertTan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
         const float HorzTan = -VertTan / Device.fASPECT;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         const float VertTan = tanf(deg2rad(Device.fFOV / 2.0f));
         const float HorzTan = VertTan / Device.fASPECT;
 #else
@@ -389,6 +389,10 @@ void CRender::create()
     // TODO: OGL: temporary disabled HBAO/HDAO, need to fix it
     o.ssao_hbao = false;
     o.ssao_hdao = false;
+#elif defined(USE_METAL)
+    // METAL TODO: temporary disabled HBAO/HDAO, need to fix it
+    o.ssao_hbao = false;
+    o.ssao_hdao = false;
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -402,7 +406,7 @@ void CRender::create()
 #if defined(USE_DX11)
     o.dx11_sm4_1 = ps_r2_ls_flags.test((u32)R3FLAG_USE_DX10_1);
     o.dx11_sm4_1 = o.dx11_sm4_1 && (HW.FeatureLevel >= D3D_FEATURE_LEVEL_10_1);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     o.dx11_sm4_1 = true;
 #else
 #   error No graphics API selected or enabled!
@@ -422,6 +426,12 @@ void CRender::create()
     o.msaa_hybrid &= !o.msaa_opt && o.msaa && (HW.FeatureLevel >= D3D_FEATURE_LEVEL_10_1);
 #elif defined(USE_OGL)
     // TODO: OGL: temporary disabled, need to fix it
+    o.msaa = false;
+    o.msaa_samples = 0;
+    o.msaa_opt = o.msaa;
+    o.msaa_hybrid = false;
+#elif defined(USE_METAL)
+    // METAL TODO: temporary disabled, need to fix it
     o.msaa = false;
     o.msaa_samples = 0;
     o.msaa_opt = o.msaa;
@@ -805,19 +815,19 @@ void CRender::add_SkeletonWallmark(
 
 void CRender::rmNear(CBackend& cmd_list)
 {
-    const D3D_VIEWPORT viewport = { 0, 0, Target->get_width(cmd_list), Target->get_height(cmd_list), 0.f, 0.02f };
+    const D3D_VIEWPORT viewport = { 0.f, 0.f, float(Target->get_width(cmd_list)), float(Target->get_height(cmd_list)), 0.f, 0.02f };
     cmd_list.SetViewport(viewport);
 }
 
 void CRender::rmFar(CBackend& cmd_list)
 {
-    const D3D_VIEWPORT viewport = { 0, 0, Target->get_width(cmd_list), Target->get_height(cmd_list), 0.99999f, 1.f };
+    const D3D_VIEWPORT viewport = { 0.f, 0.f, float(Target->get_width(cmd_list)), float(Target->get_height(cmd_list)), 0.99999f, 1.f };
     cmd_list.SetViewport(viewport);
 }
 
 void CRender::rmNormal(CBackend& cmd_list)
 {
-    const D3D_VIEWPORT viewport = { 0, 0, Target->get_width(cmd_list), Target->get_height(cmd_list), 0.f, 1.f };
+    const D3D_VIEWPORT viewport = { 0.f, 0.f, float(Target->get_width(cmd_list)), float(Target->get_height(cmd_list)), 0.f, 1.f };
     cmd_list.SetViewport(viewport);
 }
 

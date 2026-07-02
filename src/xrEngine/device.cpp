@@ -240,6 +240,7 @@ void CRenderDevice::DoRender()
             seqRender.Process(); // all rendering is done here
         }
 
+        GEnv.Render->ApplyGamma();
         CalcFrameStats();
         Statistic->Show();
 
@@ -264,6 +265,9 @@ void CRenderDevice::ProcessFrame()
 
     if (!BeforeFrame())
         return;
+
+    if (dwFrame < 10)
+        Msg("ProcessFrame #%d", dwFrame);
 
     const u64 frameStartTime = TimerGlobal.GetElapsed_ms();
 
@@ -415,9 +419,15 @@ void CRenderDevice::Run()
         Timer_MM_Delta = time_system - time_local;
     }
 
-    SDL_HideWindow(m_sdlWnd); // workaround for SDL bug
+    if (!GEnv.Render || GEnv.Render->GetBackendAPI() != IRender::BackendAPI::Metal)
+    {
+        SDL_HideWindow(m_sdlWnd); // workaround for SDL bug
+    }
     UpdateWindowProps();
-    SDL_ShowWindow(m_sdlWnd);
+    if (!GEnv.Render || GEnv.Render->GetBackendAPI() != IRender::BackendAPI::Metal)
+    {
+        SDL_ShowWindow(m_sdlWnd);
+    }
     SDL_RaiseWindow(m_sdlWnd);
 }
 

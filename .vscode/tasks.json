@@ -91,6 +91,383 @@
       },
       "command": "./xr_3da -nointro -fsltx ${COC_LTX_FILE_PATH}",
       "problemMatcher": []
+    },
+    {
+      "label": "CMake: Configure (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-B",
+        "build",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_UNITY_BUILD=OFF",
+        "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Configure (Release)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-B",
+        "build",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_UNITY_BUILD=OFF",
+        "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Configure (ReleaseMasterGold)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-B",
+        "build",
+        "-DCMAKE_BUILD_TYPE=ReleaseMasterGold",
+        "-DCMAKE_UNITY_BUILD=OFF",
+        "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Configure (Mixed)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-B",
+        "build",
+        "-DCMAKE_BUILD_TYPE=Mixed",
+        "-DCMAKE_UNITY_BUILD=OFF",
+        "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Build",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--parallel"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "CMake: Build (Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--parallel"
+      ],
+      "dependsOn": [
+        "CMake: Configure (Debug)"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Build (Release)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--parallel"
+      ],
+      "dependsOn": [
+        "CMake: Configure (Release)"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Build (ReleaseMasterGold)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--parallel"
+      ],
+      "dependsOn": [
+        "CMake: Configure (ReleaseMasterGold)"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Build (Mixed)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--parallel"
+      ],
+      "dependsOn": [
+        "CMake: Configure (Mixed)"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "CMake: Clean",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build",
+        "--target",
+        "clean"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Kill xr_3da",
+      "type": "shell",
+      "command": "pkill",
+      "args": [
+        "-9",
+        "xr_3da"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "ignoreExitCode": true
+      },
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "CMake: Full Clean",
+      "type": "shell",
+      "command": "rm",
+      "args": [
+        "-rf",
+        "build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Run SoC",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-soc",
+        "-nointro"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "CMake: Build"
+      ],
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Run CS",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-cs",
+        "-nointro"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "CMake: Build"
+      ],
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Run CoP",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-nointro",
+        "-fsltx",
+        "${input:fsltxPath}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "CMake: Build"
+      ],
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "Run CoC",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-nointro"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "CMake: Build"
+      ],
+      "problemMatcher": [],
+      "group": "none"
+    },
+    {
+      "label": "CMake: Configure (Metal Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-B",
+        "build_metal",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_UNITY_BUILD=ON",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Metal: Build All",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build_metal",
+        "--parallel"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "CMake: Configure (Metal Debug)"
+      ],
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "Metal: Build xrRender_METAL",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build_metal",
+        "--target",
+        "xrRender_METAL",
+        "--parallel"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        {
+          "base": "$gcc",
+          "fileLocation": "absolute"
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "Metal: Run CoP",
+      "type": "shell",
+      "command": "${workspaceFolder}/bin/arm64/${input:buildType}/xr_3da",
+      "args": [
+        "-metal",
+        "-nointro",
+        "-fsltx",
+        "${input:fsltxPath}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "Metal: Build All"
+      ],
+      "problemMatcher": [],
+      "group": "none"
     }
   ],
   "inputs": [
@@ -105,6 +482,11 @@
         "ReleaseMasterGold"
       ],
       "default": "ReleaseMasterGold"
+    },
+    {
+      "id": "fsltxPath",
+      "type": "promptString",
+      "description": "fsgame.ltx path:"
     }
   ]
 }

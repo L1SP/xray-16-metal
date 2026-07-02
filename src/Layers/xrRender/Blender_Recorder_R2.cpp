@@ -39,6 +39,12 @@ void CBlender_Compile::r_Pass(LPCSTR _vs, LPCSTR _ps, bool bFog, BOOL bZtest, BO
 #endif
         dest.vs = RImplementation.Resources->_CreateVS(_vs, flags);
         ctable.merge(&dest.vs->constants);
+#if defined(USE_METAL)
+        // VS merge overwrites samp.index with pre-seeded values, breaking MSL [[texture(N)]]
+        for (auto& C : ctable.table)
+            if (C->type == RC_sampler && C->ps.index != 0xFFFF)
+                C->samp.index = C->ps.index;
+#endif
         dest.gs = RImplementation.Resources->_CreateGS("null");
 #ifdef USE_DX11
         dest.hs = RImplementation.Resources->_CreateHS("null");
@@ -144,7 +150,7 @@ u32 CBlender_Compile::r_Sampler(
     {
 #if defined(USE_DX11)
         r_dx11Texture(_name, texture, true);
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
         i_Texture(dwStage, texture);
 #else
 #   error No graphics API selected or enabled!
