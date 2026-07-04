@@ -22,6 +22,3 @@
 
 # exclude doxygen output
 doc/doxygen/html/*
-
-# exclude Externals
-Externals/
