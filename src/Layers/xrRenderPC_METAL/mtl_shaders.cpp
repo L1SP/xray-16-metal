@@ -77,8 +77,16 @@ static glsl_include_result_t* include_local(void* ctx, const char* header_name,
             patch_io_locations(stripped);
             xr_free(data);
             size = stripped.size();
-            data = (char*)malloc(size + 1);
+            // Ensure content ends with newline (glslang doesn't add one)
+            // to prevent #endifuniform bug when the next line is concatenated
+            bool needsNewline = (size == 0 || stripped.back() != '\n');
+            data = (char*)malloc(size + 1 + (needsNewline ? 1 : 0));
             CopyMemory(data, stripped.c_str(), size);
+            if (needsNewline)
+            {
+                data[size] = '\n';
+                size++;
+            }
             data[size] = '\0';
         }
         auto* result = (glsl_include_result_t*)malloc(sizeof(glsl_include_result_t));
@@ -184,32 +192,41 @@ static void strip_texel_offsets(xr_string& src)
 static void patch_io_locations(xr_string& s)
 {
     // SPIR-V requires explicit layout(location=...) for all IO variables.
-    // The engine's PS fragment output is always SV_Target at location 0.
+    // Fragment outputs use SV_TargetN convention where N is the render target index.
     // The VS/PS IO struct members already use #define-based locations
     // (COLOR=0, TEXCOORD0=8, etc.) from common.h.
-    // We only need to patch:
-    //   1. "out vec4 SV_Target" → "layout(location=0) out vec4 SV_Target"
-    //   2. "out vec4 SV_Target0" → "layout(location=0) out vec4 SV_Target0" (MSAA variant)
-    //   3. "out vec4 SV_Target1" → "layout(location=1) out vec4 SV_Target1" (MSAA variant)
+    // We patch "out vec4 SV_Target[N]" → "layout(location=N) out vec4 SV_Target[N]"
     size_t pos = 0;
-    while ((pos = s.find("out vec4 SV_Target", pos)) != xr_string::npos)
+    const char needle[] = "out vec4 SV_Target";
+    const size_t needleLen = sizeof(needle) - 1;
+    while ((pos = s.find(needle, pos)) != xr_string::npos)
     {
-        // Check if it already has a layout qualifier
+        // Check if it already has a layout qualifier on the same line
         size_t lineStart = s.rfind('\n', pos);
         if (lineStart == xr_string::npos) lineStart = 0;
         else lineStart++;
         xr_string prefix = s.substr(lineStart, pos - lineStart);
         if (prefix.find("layout") != xr_string::npos)
         {
-            pos += 18; // skip past "out vec4 SV_Target"
+            pos += needleLen;
             continue;
         }
-        // Determine location number: SV_Target0=0, SV_Target1=1, SV_Target=0
+        // Determine location number from the suffix after "SV_Target"
+        // SV_Target   → loc 0 (followed by ';' or whitespace)
+        // SV_Target0  → loc 0
+        // SV_Target1  → loc 1
+        // SV_Target2  → loc 2
+        // SV_TargetN  → loc N
         int loc = 0;
-        if (s.size() > pos + 18 && s[pos + 18] == '1')
-            loc = 1;
-        s.insert(pos, "layout(location=" + std::to_string(loc) + ") ");
-        pos += 22 + (loc > 0 ? 1 : 0); // skip past the inserted text
+        size_t after = pos + needleLen;
+        if (after < s.size() && s[after] >= '0' && s[after] <= '9')
+        {
+            loc = s[after] - '0';
+        }
+        char buf[32];
+        snprintf(buf, sizeof(buf), "layout(location=%d) ", loc);
+        s.insert(pos, buf);
+        pos += strlen(buf);
     }
 }
 
@@ -285,6 +302,10 @@ static xr_string resolve_includes(const xr_string& source, int depth = 0)
                                 if (c == '\\') c = '/';
 
                             content = resolve_includes(content, depth + 1);
+                            // Ensure included content ends with a newline
+                            // to prevent concatenation with the next line (#endifuniform bug)
+                            if (!content.empty() && content.back() != '\n')
+                                content += '\n';
                             result += content;
                         }
 
@@ -296,11 +317,14 @@ static xr_string resolve_includes(const xr_string& source, int depth = 0)
         }
 
         // Move to next line
-        result += source.substr(pos, lineEnd - pos + 1);
+        result += source.substr(pos, lineEnd - pos);
+        if (lineEnd < len)
+            result += '\n';
         pos = lineEnd + 1;
     }
 
-    result += source.substr(pos);
+    if (pos < len)
+        result += source.substr(pos);
     return result;
 }
 
