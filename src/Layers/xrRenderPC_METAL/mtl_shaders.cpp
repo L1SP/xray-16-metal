@@ -26,6 +26,7 @@ namespace xray::render::RENDER_NAMESPACE
 void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 destination);
 
 static void patch_io_locations(xr_string& s);
+static void patch_alpha_swizzle(xr_string& src);
 static void strip_texel_offsets(xr_string& src);
 
 void* lookup_shader_func(u32 id)
@@ -303,6 +304,19 @@ static xr_string resolve_includes(const xr_string& source, int depth = 0)
     return result;
 }
 
+static void patch_alpha_swizzle(xr_string& src)
+{
+    // Metal's A8Unorm pixel format stores single-channel data in the alpha
+    // component. GLSL `.rrrr` swizzle reads from the red channel (which is 0
+    // for A8 textures), making fonts invisible. Replace `.rrrr` → `.aaaa`.
+    size_t pos = 0;
+    while ((pos = src.find(".rrrr", pos)) != xr_string::npos)
+    {
+        src.replace(pos, 5, ".aaaa");
+        pos += 5;
+    }
+}
+
 static xr_string build_full_glsl(pcstr pTarget, pcstr resolvedSource, pcstr shaderOptions)
 {
     xr_string src;
@@ -315,6 +329,8 @@ static xr_string build_full_glsl(pcstr pTarget, pcstr resolvedSource, pcstr shad
     src = resolve_includes(src);
     strip_texel_offsets(src);
     patch_io_locations(src);
+    if (pTarget[0] == 'p')
+        patch_alpha_swizzle(src);
     return src;
 }
 

@@ -405,7 +405,7 @@ public:
 #elif defined(USE_METAL)
     BackendAPI GetBackendAPI() const override { return IRender::BackendAPI::Metal; }
     u32 get_dx_level() override { return /*HW.pDevice1?0x000A0001:*/0x000A0000; }
-    pcstr getShaderPath() override { return "mtl\\"; }
+    pcstr getShaderPath() override { return "gl\\"; } // SPIRV-Cross uses OpenGL shaders, so we can use the same path
 #else
 #   error No graphics API selected or enabled!
 #endif
