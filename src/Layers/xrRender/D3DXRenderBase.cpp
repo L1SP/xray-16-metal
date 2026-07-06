@@ -283,6 +283,8 @@ void D3DXRenderBase::Begin()
     Index.Flush();
     if (HW.Caps.SceneMode)
         overdrawBegin();
+
+    OnBeginScene();
 }
 
 void D3DXRenderBase::Clear()

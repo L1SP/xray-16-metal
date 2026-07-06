@@ -492,6 +492,7 @@ public:
     void Calculate() override;
     void Render() override;
     void RenderMenu() override;
+    void OnBeginScene() override;
 
     void Screenshot(ScreenshotMode mode = SM_NORMAL, pcstr name = nullptr) override;
     void OnFrame() override;

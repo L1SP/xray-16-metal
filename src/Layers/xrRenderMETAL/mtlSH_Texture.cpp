@@ -148,10 +148,6 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
     if (!mtlTex)
         return;
 
-    enc->setFragmentTexture(mtlTex, dwStage);
-    if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
-        enc->setFragmentSamplerState(sampler, dwStage);
-
     if (pTheora->Update(m_play_time != 0xFFFFFFFF ? m_play_time : Device.dwTimeContinual))
     {
         u32 _w = pTheora->Width(true);
@@ -167,6 +163,9 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 
         xr_free(pBits);
     }
+    enc->setFragmentTexture(mtlTex, dwStage);
+    if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
+        enc->setFragmentSamplerState(sampler, dwStage);
 }
 
 extern xr_map<u32, MTL::Texture*> s_mtlTextures;

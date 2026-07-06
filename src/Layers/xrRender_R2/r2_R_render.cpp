@@ -10,6 +10,17 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+void CRender::OnBeginScene()
+{
+    // Ensure the base render target (rt_Base) is active before any rendering.
+    // During the intro, neither CMainMenu::RenderMenu() nor CRender::Render()
+    // is called, so without this, the render encoder targets the drawable
+    // directly and phase_flip() overwrites it with empty rt_Base → black screen.
+    if (Target)
+        Target->u_setrt(RCache, Device.dwWidth, Device.dwHeight,
+            Target->get_base_rt(), 0, 0, Target->get_base_zb());
+}
+
 void CRender::RenderMenu()
 {
 #if defined(USE_DX11)

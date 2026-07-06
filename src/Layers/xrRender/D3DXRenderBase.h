@@ -53,6 +53,7 @@ public:
     virtual bool GetForceGPU_REF() override;
     virtual u32 GetCacheStatPolys() override;
     virtual void Begin() override;
+    virtual void OnBeginScene() {} // called at end of Begin() — override to set up default RT
     virtual void Clear() override;
     virtual void End() override;
     virtual void ClearTarget() override;
