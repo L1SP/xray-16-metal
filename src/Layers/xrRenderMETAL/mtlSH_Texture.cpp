@@ -171,16 +171,19 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 extern xr_map<u32, MTL::Texture*> s_mtlTextures;
 void CTexture::apply_normal(CBackend& cmd_list, u32 dwStage) const
 {
+    if (!pSurface)
+        return;
     auto* mtlTex = lookup_mtl_texture(pSurface);
     if (!mtlTex)
-    {
-        Msg("! apply_normal FAIL: pSurface=%u '%s' stage=%d", pSurface, cName.c_str(), dwStage);
         return;
-    }
     if (auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder))
     {
         if (mtlTex->pixelFormat() != MTL::PixelFormatBGRA8Unorm && mtlTex->pixelFormat() != MTL::PixelFormatBGRA8Unorm_sRGB
             && mtlTex->pixelFormat() != MTL::PixelFormatRGBA8Unorm && mtlTex->pixelFormat() != MTL::PixelFormatRGBA8Unorm_sRGB
+            && mtlTex->pixelFormat() != MTL::PixelFormatRGBA16Float
+            && mtlTex->pixelFormat() != MTL::PixelFormatR32Float
+            && mtlTex->pixelFormat() != MTL::PixelFormatRG32Float
+            && mtlTex->pixelFormat() != MTL::PixelFormatRGBA32Float
             && mtlTex->pixelFormat() != MTL::PixelFormatBC1_RGBA && mtlTex->pixelFormat() != MTL::PixelFormatBC3_RGBA
             && mtlTex->pixelFormat() != MTL::PixelFormatBC4_RUnorm && mtlTex->pixelFormat() != MTL::PixelFormatBC5_RGUnorm
             && mtlTex->pixelFormat() != MTL::PixelFormatBC7_RGBAUnorm)

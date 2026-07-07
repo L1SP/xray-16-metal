@@ -16,6 +16,11 @@ void CRenderTarget::phase_combine()
     bool _menu_pp = g_pGamePersistent ? g_pGamePersistent->OnRenderPPUI_query() : false;
     u32 Offset = 0;
 
+    // Link luminance pool textures to $user$tonemap references
+    u32 gpu_id = Device.dwFrame % HW.Caps.iGPUNum;
+    t_LUM_src->surface_set(0, rt_LUM_pool[gpu_id * 2 + 0]->pRT);
+    t_LUM_dest->surface_set(0, rt_LUM_pool[gpu_id * 2 + 1]->pRT);
+
     // Clear RTs, set up for the combine pass
     {
         RCache.ClearRT(rt_Generic_0_r, {});

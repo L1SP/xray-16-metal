@@ -9,7 +9,7 @@
 #include <glslang/Public/resource_limits_c.h>
 #include <spirv_cross_c.h>
 
-namespace
+namespace xray::render::RENDER_NAMESPACE
 {
 xr_map<u32, void*> s_shaderFuncs;
 u32 s_nextShaderID = 1;
@@ -639,97 +639,38 @@ static bool glsl_to_spirv(const char* glslSource, glslang_stage_t stage, xr_vect
 // Different shaders may assign different [[buffer(N)]] to the same named constant
 // (e.g. c_brightness is buffer 0 in postprocess.ps but buffer 1 in postprocess_cm.ps).
 // We remap all shaders to use the same global index per constant name.
-static xr_map<xr_string, u32> g_psBufferRemap;
-static u32 g_psBufferRemapNext = 0;
-static xr_map<xr_string, u32> g_vsBufferRemap;
-static u32 g_vsBufferRemapNext = 0;
-
 static void remap_msl_buffers(xr_string& msl, bool isVertex)
 {
-    auto& globalMap = isVertex ? g_vsBufferRemap : g_psBufferRemap;
-    auto& nextIndex = isVertex ? g_vsBufferRemapNext : g_psBufferRemapNext;
+    // Safety pass: ensure no [[buffer(N)]] has N >= 30 (Metal's limit).
+    // With 0-based SPIR-V bindings per resource type, this should be a no-op,
+    // but handle edge cases like storage buffers or argument buffers we don't explicitly bind.
+    unsigned nextBuffer = 0;
 
-    const char* p = strstr(msl.c_str(), "main0(");
-    if (!p) return;
-    p += 6;
-    int depth = 1;
-    const char* end = p;
-    while (*end && depth > 0)
+    const char* p = msl.c_str();
+    while ((p = strstr(p, "[[buffer(")) != nullptr)
     {
-        if (*end == '(') depth++;
-        else if (*end == ')') depth--;
-        if (depth > 0) end++;
-    }
-    if (depth != 0) return;
-
-    xr_string params(p, end - p);
-
-    // Phase 1: collect all constant buffer params and their old → new index mapping
-    struct BufRemap { xr_string name; u32 oldIdx; u32 newIdx; };
-    xr_vector<BufRemap> remaps;
-
-    size_t pos = 0;
-    while (pos < params.length())
-    {
-        size_t cpos = params.find("constant ", pos);
-        if (cpos == xr_string::npos) break;
-
-        size_t tstart = cpos + 9;
-        while (tstart < params.length() && (params[tstart] == ' ' || params[tstart] == '\t'))
-            tstart++;
-
-        size_t amp = params.find('&', tstart);
-        if (amp == xr_string::npos) { pos = cpos + 9; continue; }
-
-        size_t nstart = amp + 1;
-        while (nstart < params.length() && (params[nstart] == ' ' || params[nstart] == '&'))
-            nstart++;
-        size_t nend = nstart;
-        while (nend < params.length() && params[nend] != ' ' && params[nend] != ',' && params[nend] != ')' && params[nend] != '[')
-            nend++;
-        xr_string name = params.substr(nstart, nend - nstart);
-        if (name.empty()) { pos = cpos + 9; continue; }
-
-        size_t bufpos = params.find("[[buffer(", nend);
-        if (bufpos != xr_string::npos)
+        const char* numStart = p + 9;
+        char* endp = nullptr;
+        unsigned oldIdx = (unsigned)strtoul(numStart, &endp, 10);
+        if (oldIdx >= 30)
         {
-            const char* num_start = params.c_str() + bufpos + 9;
-            char* endp = nullptr;
-            u32 oldIdx = (u32)strtoul(num_start, &endp, 10);
-
-            auto it = globalMap.find(name);
-            u32 newIdx;
-            if (it == globalMap.end())
+            char oldBuf[32], newBuf[32];
+            snprintf(oldBuf, sizeof(oldBuf), "[[buffer(%u)]]", oldIdx);
+            snprintf(newBuf, sizeof(newBuf), "[[buffer(%u)]]", nextBuffer++);
+            size_t rp = 0;
+            size_t afterLast = 0;
+            while ((rp = msl.find(oldBuf, rp)) != xr_string::npos)
             {
-                newIdx = nextIndex++;
-                globalMap[name] = newIdx;
+                msl.replace(rp, strlen(oldBuf), newBuf);
+                rp += strlen(newBuf);
+                afterLast = rp;
             }
-            else
-            {
-                newIdx = it->second;
-            }
-
-            if (newIdx != oldIdx)
-                remaps.push_back({std::move(name), oldIdx, newIdx});
+            p = afterLast > 0 ? msl.c_str() + afterLast : nullptr;
         }
-        pos = cpos + 9;
-    }
-
-    // Phase 2: apply each remap using per-variable replacement.
-    // Replacing `varname [[buffer(N)]]` instead of bare `[[buffer(N)]]` avoids
-    // cross-contamination when multiple variables share the same old index.
-    for (const auto& r : remaps)
-    {
-        char oldBuf[256], newBuf[256];
-        snprintf(oldBuf, sizeof(oldBuf), "%s [[buffer(%u)]]", r.name.c_str(), r.oldIdx);
-        snprintf(newBuf, sizeof(newBuf), "%s [[buffer(%u)]]", r.name.c_str(), r.newIdx);
-        xr_string oldStr(oldBuf);
-        xr_string newStr(newBuf);
-        size_t rp = 0;
-        while ((rp = msl.find(oldStr, rp)) != xr_string::npos)
+        else
         {
-            msl.replace(rp, oldStr.length(), newStr);
-            rp += newStr.length();
+            nextBuffer = oldIdx + 1;
+            p += 10;
         }
     }
 }
@@ -870,11 +811,10 @@ static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string
             spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &list, &count);
             for (size_t i = 0; i < count; i++)
                 spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
-            const size_t sampledImageCount = count;
 
             spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count);
             for (size_t i = 0; i < count; i++)
-                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)(i + sampledImageCount));
+                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
         }
     }
 

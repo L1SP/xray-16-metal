@@ -11,6 +11,40 @@
 namespace xray::render::RENDER_NAMESPACE
 {
 static u32 s_declUID = 1;
+
+static u32 get_null_ps_id()
+{
+    static u32 id = 0;
+    if (id != 0)
+        return id;
+
+    auto* device = static_cast<MTL::Device*>(HW.m_device);
+    if (!device)
+        return 0;
+
+    NS::String* src = NS::String::string("fragment float4 null_main() { return float4(0); }", NS::UTF8StringEncoding);
+    NS::Error* err = nullptr;
+    auto* lib = device->newLibrary(src, nullptr, &err);
+    if (!lib)
+    {
+        if (err)
+            Msg("! null PS library creation failed: %s", err->localizedDescription()->utf8String());
+        return 0;
+    }
+
+    auto* func = lib->newFunction(NS::String::string("null_main", NS::UTF8StringEncoding));
+    lib->release();
+    if (!func)
+    {
+        Msg("! null PS function not found in library");
+        return 0;
+    }
+
+    void* ptr = func;
+    register_shader_func(ptr, id);
+    return id;
+}
+
 SPass* CResourceManager::_CreatePass(const SPass& proto)
 {
     for (SPass* pass : v_passes)
@@ -65,7 +99,20 @@ SVS* CResourceManager::_CreateVS(cpcstr shader, u32 flags)
     case 4: xr_strcat(name, "_4"); break;
     // m_skinning < 0 → no suffix → SKIN_NONE
     }
-    return CreateShader<SVS>(name, shader, flags);
+    auto* result = CreateShader<SVS>(name, shader, flags);
+    if (result && result->sh == 0)
+    {
+        // CreateShader short-circuited for name=="null" (m_skinning < 0, no suffix).
+        // Metal requires a real function; force compilation by using a proxy cache key
+        // that won't match the "null" string.
+        string_path proxy;
+        xr_strcpy(proxy, name);
+        xr_strcat(proxy, "$");
+        auto* proxyResult = CreateShader<SVS>(proxy, shader, flags);
+        if (proxyResult && proxyResult->sh != 0)
+            result->sh = proxyResult->sh;
+    }
+    return result;
 }
 
 void CResourceManager::_DeleteVS(const SVS* vs) { DestroyShader(vs); }
@@ -85,7 +132,14 @@ SPS* CResourceManager::_CreatePS(LPCSTR _name)
     case 6: xr_strcat(name, "_6"); break;
     case 7: xr_strcat(name, "_7"); break;
     }
-    return CreateShader<SPS>(name, _name);
+    SPS* result = CreateShader<SPS>(name, _name);
+    if (result && result->sh == 0)
+    {
+        u32 id = get_null_ps_id();
+        if (id)
+            result->sh = id;
+    }
+    return result;
 }
 
 void CResourceManager::_DeletePS(const SPS* ps) { DestroyShader(ps); }

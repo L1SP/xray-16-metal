@@ -77,6 +77,9 @@ namespace xray::render::RENDER_NAMESPACE
 {
 // Lookup Metal shader function by u32 ID (stored in SVS/SPS::sh)
 void* lookup_shader_func(u32 id);
+void register_shader_func(void* func, u32& outID);
+extern xr_map<u32, void*> s_shaderFuncs;
+extern u32 s_nextShaderID;
 
 // Texture handle registry (u32 → MTL::Texture*)
 MTL::Texture* lookup_mtl_texture(u32 handle);

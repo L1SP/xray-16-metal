@@ -200,41 +200,6 @@ static void parse_glsl_uniforms(R_constant_table& table, pcstr source, u32 desti
     }
 }
 
-// Common sampler names pre-seeded in the constant table
-static const pcstr kCommonSamplers[] =
-{
-    "env_s0", "env_s1",
-    "jitter0", "jitter1", "jitter2", "jitter3", "jitter4", "jitterMipped",
-    "s_accumulator", "s_att",
-    "s_base", "s_base0", "s_base1", "s_base_hud",
-    "s_bloom", "s_bump", "s_bumpD", "s_bumpX",
-    "s_clouds0", "s_clouds1",
-    "s_depth",
-    "s_detail", "s_detailBump", "s_detailBumpX",
-    "s_diffuse",
-    "s_distort", "s_dmap",
-    "s_dn_a", "s_dn_aX", "s_dn_b", "s_dn_bX", "s_dn_g", "s_dn_gX", "s_dn_r", "s_dn_rX",
-    "s_dt_a", "s_dt_b", "s_dt_g", "s_dt_r",
-    "s_env", "s_env0", "s_env1",
-    "s_generic",
-    "s_grad0", "s_grad1",
-    "s_half_depth", "s_hemi",
-    "s_image",
-    "s_leaves", "s_lmap",
-    "s_mask", "s_material",
-    "s_nmap", "s_noise", "s_normal",
-    "s_occ",
-    "s_patched_normal", "s_position",
-    "s_sky0", "s_sky1",
-    "s_smap", "s_smap_minmax",
-    "s_tbump", "s_tbumpX", "s_tdetailBumpX",
-    "s_tonemap",
-    "s_vollight",
-    "s_water", "s_waterFall",
-    "sky_s0", "sky_s1",
-    nullptr
-};
-
 // Populate constant table from MSL source (active uniforms only)
 void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 destination)
 {
@@ -412,34 +377,6 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
 BOOL R_constant_table::parse(void* _desc, u32 destination)
 {
     auto source = static_cast<pcstr>(_desc);
-
-    // Pre-seed common samplers with indices wrapped to 0-15
-    constexpr u32 kMaxPixelTextures = 16;
-    {
-        u32 idx = 0;
-        for (pcstr const* sp = kCommonSamplers; *sp; ++sp)
-        {
-            u32 count = 0;
-            for (auto& e : table)
-                if (e->name == *sp) count++;
-            if (count > 0)
-            {
-                ++idx;
-                continue;
-            }
-            ref_constant C = table.emplace_back(xr_new<R_constant>());
-            C->name = *sp;
-            C->destination = RC_dest_sampler;
-            C->type = RC_sampler;
-            C->handler = &binder_sampler;
-            R_constant_load& L = C->samp;
-            L.index = idx % kMaxPixelTextures;
-            L.cls = RC_sampler;
-            L.location = idx % kMaxPixelTextures;
-            L.program = 0;
-            ++idx;
-        }
-    }
 
     // Sort before GLSL uniform parsing — parse_glsl_uniforms uses table.get()
     // which relies on binary search (lower_bound).
