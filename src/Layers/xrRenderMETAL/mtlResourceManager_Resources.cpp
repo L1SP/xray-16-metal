@@ -63,6 +63,7 @@ SVS* CResourceManager::_CreateVS(cpcstr shader, u32 flags)
     case 2: xr_strcat(name, "_2"); break;
     case 3: xr_strcat(name, "_3"); break;
     case 4: xr_strcat(name, "_4"); break;
+    // m_skinning < 0 → no suffix → SKIN_NONE
     }
     return CreateShader<SVS>(name, shader, flags);
 }

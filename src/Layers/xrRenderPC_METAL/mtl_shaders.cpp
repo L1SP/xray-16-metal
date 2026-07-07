@@ -58,7 +58,6 @@ static glsl_include_result_t* include_local(void* ctx, const char* header_name,
     string_path relPath;
     strconcat(sizeof(relPath), relPath, RImplementation.getShaderPath(), header.c_str());
     // Open via $game_shaders$ alias
-    Msg("* include_local: header=[%s] relPath=[%s] depth=%zu", header_name, relPath, include_depth);
     IReader* reader = FS.r_open("$game_shaders$", relPath);
     if (reader)
     {
@@ -353,6 +352,40 @@ static xr_string build_full_glsl(pcstr pTarget, pcstr resolvedSource, pcstr shad
     src = resolve_includes(src);
     strip_texel_offsets(src);
     patch_io_locations(src);
+    // Normalize backslashes to forward slashes in any remaining #include paths
+    // (glslang's preprocessor interprets \v, \s, etc. as escape sequences).
+    {
+        size_t pos = 0;
+        while ((pos = src.find("#include", pos)) != xr_string::npos)
+        {
+            size_t q1 = src.find('"', pos + 8);
+            if (q1 != xr_string::npos)
+            {
+                size_t q2 = src.find('"', q1 + 1);
+                if (q2 != xr_string::npos)
+                {
+                    for (size_t i = q1 + 1; i < q2; ++i)
+                        if (src[i] == '\\') src[i] = '/';
+                }
+            }
+            pos = pos + 8;
+        }
+    }
+    // Fix float4→float3 type mismatch for SKIN_NONE (no SKIN_0) vertex shaders.
+    // v_model_*.h uses #ifdef SKIN_0 to pick float3 vs float4 for NORMAL.
+    // With only SKIN_NONE defined, v_model_N is float4 but v_model.N is float3.
+    if (pTarget[0] == 'v' &&
+        src.find("#define SKIN_NONE 1") != xr_string::npos &&
+        src.find("#define SKIN_0 1") == xr_string::npos)
+    {
+        size_t pos = 0;
+        while ((pos = src.find("I.N = v_model_N", pos)) != xr_string::npos)
+        {
+            src.replace(pos, 15, "I.N = v_model_N.xyz");
+            pos += 19;
+        }
+    }
+
     if (pTarget[0] == 'p')
         patch_alpha_swizzle(src);
     return src;
@@ -460,23 +493,61 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     // Load raw source (with #include directives) — glslang's include callbacks handle resolution
     xr_string source(static_cast<const char*>(fs->pointer()), fs->length());
 
-    // Prepend per-shader SKIN macro (m_skinning is set by shader_option_skinning()
-    // in SkeletonX.cpp before compilation, matching the GL/DX11 backends).
-    xr_string skinDefine;
-    if (m_skinning < 0)
-        skinDefine = "#define SKIN_NONE 1\n";
-    else if (m_skinning == 0)
-        skinDefine = "#define SKIN_0 1\n";
-    else if (m_skinning == 1)
-        skinDefine = "#define SKIN_1 1\n";
-    else if (m_skinning == 2)
-        skinDefine = "#define SKIN_2 1\n";
-    else if (m_skinning == 3)
-        skinDefine = "#define SKIN_3 1\n";
-    else if (m_skinning == 4)
-        skinDefine = "#define SKIN_4 1\n";
+    // Build per-shader prefix: common options + SKIN macro
+    // Matches options set by the GL backend in shader_sources_manager::Apply()
+    xr_string prefix;
 
-    source = skinDefine + source;
+    // Shadow map size
+    char smap_size_str[16];
+    xr_itoa(m_SMAPSize, smap_size_str, 10);
+    prefix += "#define SMAP_size " + xr_string(smap_size_str) + "\n";
+
+    // FP16 filter/blend
+    if (o.fp16_filter)
+        prefix += "#define FP16_FILTER 1\n";
+    if (o.fp16_blend)
+        prefix += "#define FP16_BLEND 1\n";
+
+    // Hardware shadow map support
+    if (o.HW_smap)
+        prefix += "#define USE_HWSMAP 1\n";
+    if (o.HW_smap_PCF)
+        prefix += "#define USE_HWSMAP_PCF 1\n";
+    if (o.HW_smap_FETCH4)
+        prefix += "#define USE_FETCH4 1\n";
+
+    // SJitter
+    if (o.sjitter)
+        prefix += "#define USE_SJITTER 1\n";
+
+    // Per-shader SKIN macro (m_skinning is set by shader_option_skinning()
+    // in SkeletonX.cpp before compilation, matching the GL/DX11 backends).
+    // Note: We do NOT define SKIN_0 alongside SKIN_NONE here, even though
+    // v_model_*.h needs SKIN_0 to use float3 v_model_N (matching v_model.N).
+    // Defining SKIN_0 pulls in sbones_array from skin.h (234 float4 uniforms)
+    // which exceeds Metal's 31-buffer limit for unused bindings. Instead,
+    // the float4→float3 type mismatch is fixed at the source level in
+    // build_full_glsl() by adding .xyz truncation to I.N = v_model_N.
+    if (m_skinning < 0)
+        prefix += "#define SKIN_NONE 1\n";
+    else if (m_skinning == 0)
+        prefix += "#define SKIN_0 1\n";
+    else if (m_skinning == 1)
+        prefix += "#define SKIN_1 1\n";
+    else if (m_skinning == 2)
+        prefix += "#define SKIN_2 1\n";
+    else if (m_skinning == 3)
+        prefix += "#define SKIN_3 1\n";
+    else if (m_skinning == 4)
+        prefix += "#define SKIN_4 1\n";
+    else
+    {
+        Msg("! shader_compile: m_skinning=%d (out of range) for '%s' target=%s, defaulting to SKIN_NONE",
+            (int)m_skinning, name, pTarget);
+        prefix += "#define SKIN_NONE 1\n";
+    }
+
+    source = prefix + source;
 
     create_shader(pTarget, result, source.c_str(), m_ShaderOptions.c_str());
     return S_OK;
@@ -523,6 +594,21 @@ static bool glsl_to_spirv(const char* glslSource, glslang_stage_t stage, xr_vect
     if (!glslang_shader_parse(shader, &input))
     {
         Msg("! glslang parse error: %s", glslang_shader_get_info_log(shader));
+        // Dump first 30 lines of GLSL source for debugging
+        xr_string src(input.code);
+        size_t nlCount = 0, pos = 0;
+        Msg("--- GLSL source (first 30 lines, %zu total bytes) ---", src.size());
+        while (nlCount < 30 && pos < src.size())
+        {
+            size_t end = src.find('\n', pos);
+            if (end == xr_string::npos)
+                end = src.size();
+            Msg("%s", xr_string(src.c_str() + pos, end - pos).c_str());
+            pos = end + 1;
+            nlCount++;
+        }
+        if (pos < src.size())
+            Msg("... (%zu more bytes)", src.size() - pos);
         glslang_shader_delete(shader);
         return false;
     }

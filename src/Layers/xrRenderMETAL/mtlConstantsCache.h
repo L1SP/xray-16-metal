@@ -52,12 +52,6 @@ class ECORE_API R_constants
     }
 
 private:
-    static xr_vector<u8>& scratch()
-    {
-        static xr_vector<u8> buf;
-        return buf;
-    }
-
     ICF void set(R_constant* C, R_constant_load& L, const Fmatrix& A)
     {
         VERIFY(RC_float == C->type);
@@ -130,15 +124,8 @@ public:
         if (C->destination & RC_dest_all)     set(C, C->pp, A);
     }
 
-    // For Metal: location is the buffer slot ([[buffer(N)]]), NOT a uniform location.
-    // Array elements share the same buffer slot; e is the element index within the array.
-
     ICF void seta(R_constant* C, u32 e, const Fmatrix& A)
     {
-        // Use volatile barrier to prevent optimizer from removing null check
-        // (compiler sees &*array UB in SkeletonX.cpp and proves C non-null)
-        R_constant* volatile Cp = C;
-        if (!Cp) return;
         R_constant_load L;
         if (C->destination & RC_dest_pixel)   L = C->ps;
         if (C->destination & RC_dest_vertex)  L = C->vs;
@@ -149,8 +136,6 @@ public:
 
     ICF void seta(R_constant* C, u32 e, const Fvector4& A)
     {
-        R_constant* volatile Cp = C;
-        if (!Cp) return;
         R_constant_load L;
         if (C->destination & RC_dest_pixel)   L = C->ps;
         if (C->destination & RC_dest_vertex)  L = C->vs;
@@ -161,8 +146,6 @@ public:
 
     ICF void seta(R_constant* C, u32 e, float x, float y, float z, float w)
     {
-        R_constant* volatile Cp = C;
-        if (!Cp) return;
         R_constant_load L;
         if (C->destination & RC_dest_pixel)   L = C->ps;
         if (C->destination & RC_dest_vertex)  L = C->vs;
@@ -183,61 +166,79 @@ public:
         if (pending().empty())
             return;
 
-        // Collect unique locations (linear scan — small list, max ~256)
-        u32 locs[MaxPending];
-        u32 numLocs = 0;
         for (size_t i = 0; i < pending().size(); i++)
         {
-            u32 loc = pending()[i].location;
-            bool found = false;
-            for (u32 j = 0; j < numLocs; j++)
-                if (locs[j] == loc) { found = true; break; }
-            if (!found)
-                locs[numLocs++] = loc;
+            const auto& p = pending()[i];
+            if (p.offset != u32(-1))
+                continue;
+
+            if (p.dest & RC_dest_vertex)
+                enc->setVertexBytes(p.data, p.size, p.location);
+            if (p.dest & RC_dest_pixel)
+                enc->setFragmentBytes(p.data, p.size, p.location);
+            if (p.dest & RC_dest_geometry)
+                enc->setVertexBytes(p.data, p.size, p.location);
+            if (p.dest & RC_dest_all)
+            {
+                enc->setVertexBytes(p.data, p.size, p.location);
+                enc->setFragmentBytes(p.data, p.size, p.location);
+            }
         }
 
-        auto& sc = scratch();
+        u32 locs[16];
+        u32 numLocs = 0;
+        for (auto& p : pending())
+        {
+            if (p.offset == u32(-1))
+                continue;
+            bool found = false;
+            for (u32 j = 0; j < numLocs; j++)
+                if (locs[j] == p.location)
+                {
+                    found = true;
+                    break;
+                }
+            if (!found && numLocs < 16)
+                locs[numLocs++] = p.location;
+        }
 
         for (u32 li = 0; li < numLocs; li++)
         {
             u32 loc = locs[li];
-
-            // Find max byte extent for this location
-            u32 maxEnd = 0;
-            u32 destFlags = 0;
-            for (size_t i = 0; i < pending().size(); i++)
+            u32 totalSize = 0;
+            for (auto& p : pending())
             {
-                const auto& p = pending()[i];
-                if (p.location != loc) continue;
-                destFlags = p.dest;
-                u32 end = (p.offset == u32(-1)) ? p.size : (p.offset + p.size);
-                if (end > maxEnd) maxEnd = end;
+                if (p.offset == u32(-1) || p.location != loc)
+                    continue;
+                u32 end = p.offset + p.size;
+                if (end > totalSize)
+                    totalSize = end;
             }
-            if (maxEnd == 0) continue;
+            if (totalSize == 0)
+                continue;
 
-            // Copy all entries for this location into a scratch buffer
-            sc.assign(maxEnd, 0);
-            for (size_t i = 0; i < pending().size(); i++)
+            xr_vector<u8> buf(totalSize, 0);
+            u32 dest = RC_dest_vertex;
+            for (auto& p : pending())
             {
-                const auto& p = pending()[i];
-                if (p.location != loc) continue;
-                u32 dstOff = (p.offset == u32(-1)) ? 0 : p.offset;
-                memcpy(&sc[dstOff], p.data, p.size);
+                if (p.offset == u32(-1) || p.location != loc)
+                    continue;
+                memcpy(buf.data() + p.offset, p.data, p.size);
+                dest = p.dest;
             }
 
-            // Upload to encoder
-            if (destFlags & RC_dest_vertex)
-                enc->setVertexBytes(sc.data(), maxEnd, loc);
-            if (destFlags & RC_dest_pixel)
-                enc->setFragmentBytes(sc.data(), maxEnd, loc);
-            if (destFlags & RC_dest_all)
+            if (dest & RC_dest_vertex)
+                enc->setVertexBytes(buf.data(), totalSize, loc);
+            if (dest & RC_dest_pixel)
+                enc->setFragmentBytes(buf.data(), totalSize, loc);
+            if (dest & RC_dest_geometry)
+                enc->setVertexBytes(buf.data(), totalSize, loc);
+            if (dest & RC_dest_all)
             {
-                enc->setVertexBytes(sc.data(), maxEnd, loc);
-                enc->setFragmentBytes(sc.data(), maxEnd, loc);
+                enc->setVertexBytes(buf.data(), totalSize, loc);
+                enc->setFragmentBytes(buf.data(), totalSize, loc);
             }
         }
-
-        pending().clear();
     }
 
     ICF void reset()
