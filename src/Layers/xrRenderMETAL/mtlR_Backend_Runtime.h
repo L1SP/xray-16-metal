@@ -639,7 +639,7 @@ IC void CBackend::set_Z(u32 _enable)
         return;
 
     MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
-    dsDesc->setDepthCompareFunction(z_enable
+    dsDesc->setDepthCompareFunction(z_enable && z_func != u32(-1)
         ? static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(z_func))
         : MTL::CompareFunctionAlways);
     dsDesc->setDepthWriteEnabled(z_enable);

@@ -65,10 +65,7 @@ void CRenderTarget::_create_gamma_pso()
     if (!vsLib)
     {
         if (error)
-        {
             Msg("! _create_gamma_pso: VS compile error: %s", error->localizedDescription()->utf8String());
-            error->release();
-        }
         pool->release();
         return;
     }
@@ -77,8 +74,6 @@ void CRenderTarget::_create_gamma_pso()
     vsLib->release();
     if (!vsFn)
     {
-        if (error)
-            error->release();
         pool->release();
         return;
     }
@@ -89,10 +84,7 @@ void CRenderTarget::_create_gamma_pso()
     if (!fsLib)
     {
         if (error)
-        {
             Msg("! _create_gamma_pso: FS compile error: %s", error->localizedDescription()->utf8String());
-            error->release();
-        }
         vsFn->release();
         pool->release();
         return;
@@ -103,8 +95,6 @@ void CRenderTarget::_create_gamma_pso()
     if (!fsFn)
     {
         vsFn->release();
-        if (error)
-            error->release();
         pool->release();
         return;
     }
@@ -120,10 +110,7 @@ void CRenderTarget::_create_gamma_pso()
     if (!m_gamma_render_pso)
     {
         if (error)
-        {
             Msg("! _create_gamma_pso: PSO creation failed: %s", error->localizedDescription()->utf8String());
-            error->release();
-        }
     }
     else
     {

@@ -189,10 +189,16 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
     // D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR,
     // D3DTEXF_ANISOTROPIC);
     C.r_dx11Texture("s_base", C.L_textures[0]);
-    C.r_dx11Texture("s_bumpX", fnameB); // should be before base bump
-    C.r_dx11Texture("s_bump", fnameA);
-    C.r_dx11Texture("s_bumpD", dt);
-    C.r_dx11Texture("s_detail", dt);
+    if (fnameA[0])
+    {
+        C.r_dx11Texture("s_bumpX", fnameB); // should be before base bump
+        C.r_dx11Texture("s_bump", fnameA);
+    }
+    if (dt[0])
+    {
+        C.r_dx11Texture("s_bumpD", dt);
+        C.r_dx11Texture("s_detail", dt);
+    }
     if (bHasDetailBump)
     {
         C.r_dx11Texture("s_detailBump", texDetailBump);
@@ -223,11 +229,17 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
     }
     C.r_Sampler(
         "s_base", C.L_textures[0], false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
-    C.r_Sampler("s_bumpX", fnameB, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR,
-        D3DTEXF_ANISOTROPIC); // should be before base bump
-    C.r_Sampler("s_bump", fnameA, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
-    C.r_Sampler("s_bumpD", dt, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
-    C.r_Sampler("s_detail", dt, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+    if (fnameA[0])
+    {
+        C.r_Sampler("s_bumpX", fnameB, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR,
+            D3DTEXF_ANISOTROPIC); // should be before base bump
+        C.r_Sampler("s_bump", fnameA, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+    }
+    if (dt[0])
+    {
+        C.r_Sampler("s_bumpD", dt, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+        C.r_Sampler("s_detail", dt, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC);
+    }
     if (bHasDetailBump)
     {
         C.r_Sampler("s_detailBump", texDetailBump, false, D3DTADDRESS_WRAP, D3DTEXF_ANISOTROPIC, D3DTEXF_LINEAR,

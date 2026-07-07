@@ -45,7 +45,10 @@ void CRenderTarget::phase_flip()
 
     auto* oldCmdBuffer = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer);
     if (oldCmdBuffer)
+    {
         oldCmdBuffer->commit();
+        oldCmdBuffer->release(); // balance BeginScene's retain
+    }
     HW.m_currentCmdBuffer = nullptr;
     HW.m_currentEncoder = nullptr;
     HW.m_currentRPD = nullptr;
@@ -57,6 +60,7 @@ void CRenderTarget::phase_flip()
         Msg("! phase_flip: new cmd buffer creation failed");
         return;
     }
+    cmdBuffer->retain();
     HW.m_currentCmdBuffer = cmdBuffer;
 
     auto* srcTex = lookup_mtl_texture(baseHandle);

@@ -108,7 +108,7 @@ u32 CBlender_Compile::i_Sampler(LPCSTR _name) const
 
 void CBlender_Compile::i_Texture(u32 s, LPCSTR name)
 {
-    if (name)
+    if (name && name[0])
         passTextures.emplace_back(s, ref_texture(RImplementation.Resources->_CreateTexture(name)));
 }
 
@@ -177,7 +177,7 @@ u32 CBlender_Compile::r_Sampler(
             fmag = D3DTEXF_ANISOTROPIC;
         }
 
-#if defined(USE_OGL)
+#if defined(USE_OGL) || defined(USE_METAL)
         if (0 == xr_strcmp(_name, "s_position"))
         {
             address = D3DTADDRESS_CLAMP;

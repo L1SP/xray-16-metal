@@ -457,8 +457,27 @@ static u32 create_shader(pcstr pTarget, void*& result, pcstr resolvedSource, pcs
 HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     pcstr pTarget, u32 Flags, void*& result)
 {
-    // Pass raw source (with #include directives) — glslang's include callbacks handle resolution
+    // Load raw source (with #include directives) — glslang's include callbacks handle resolution
     xr_string source(static_cast<const char*>(fs->pointer()), fs->length());
+
+    // Prepend per-shader SKIN macro (m_skinning is set by shader_option_skinning()
+    // in SkeletonX.cpp before compilation, matching the GL/DX11 backends).
+    xr_string skinDefine;
+    if (m_skinning < 0)
+        skinDefine = "#define SKIN_NONE 1\n";
+    else if (m_skinning == 0)
+        skinDefine = "#define SKIN_0 1\n";
+    else if (m_skinning == 1)
+        skinDefine = "#define SKIN_1 1\n";
+    else if (m_skinning == 2)
+        skinDefine = "#define SKIN_2 1\n";
+    else if (m_skinning == 3)
+        skinDefine = "#define SKIN_3 1\n";
+    else if (m_skinning == 4)
+        skinDefine = "#define SKIN_4 1\n";
+
+    source = skinDefine + source;
+
     create_shader(pTarget, result, source.c_str(), m_ShaderOptions.c_str());
     return S_OK;
 }
@@ -815,7 +834,7 @@ static bool compile_msl(MTL::Device* device, const char* source, const char* ent
         if (error)
         {
             Msg("! Metal shader compile error: %s", error->localizedDescription()->utf8String());
-            error->release();
+            // error is autoreleased — do NOT release it manually
         }
         return false;
     }

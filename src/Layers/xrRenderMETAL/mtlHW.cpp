@@ -251,19 +251,34 @@ void CHW::BeginScene()
         return;
     }
 
-    m_currentDrawable = layer->nextDrawable();
-    if (!m_currentDrawable)
+    auto* drawable = layer->nextDrawable();
+    if (!drawable)
     {
         Msg("! BeginScene: nextDrawable returned null (layer=%p)", (void*)layer);
         return;
     }
-
-    m_currentCmdBuffer = cmdQueue->commandBuffer();
-    if (!m_currentCmdBuffer)
+    drawable->retain();
+    if (m_currentDrawable)
     {
+        static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
+        m_currentDrawable = nullptr;
+    }
+    m_currentDrawable = drawable;
+
+    auto* newCmdBuf = cmdQueue->commandBuffer();
+    if (!newCmdBuf)
+    {
+        static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
         m_currentDrawable = nullptr;
         return;
     }
+    newCmdBuf->retain();
+    if (m_currentCmdBuffer)
+    {
+        static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer)->release();
+        m_currentCmdBuffer = nullptr;
+    }
+    m_currentCmdBuffer = newCmdBuf;
 
     // Clean up any prior encoding state (e.g. from u_setrt during CRenderTarget construction)
     EndEncoding();
@@ -275,7 +290,9 @@ void CHW::BeginScene()
     if (!drawableTex)
     {
         rpd->release();
+        static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer)->release();
         m_currentCmdBuffer = nullptr;
+        static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
         m_currentDrawable = nullptr;
         return;
     }
@@ -291,8 +308,8 @@ void CHW::BeginScene()
     // GPU state (textures, shaders, blend state, etc.) by invalidating the cache.
     RCache.Invalidate();
 
-    auto* cmdBuffer = static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer);
-    MTL::RenderCommandEncoder* enc = cmdBuffer->renderCommandEncoder(rpd);
+    auto* cmdBuf2 = static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer);
+    MTL::RenderCommandEncoder* enc = cmdBuf2->renderCommandEncoder(rpd);
     if (!enc)
     {
         rpd->release();
@@ -301,7 +318,9 @@ void CHW::BeginScene()
             unregister_mtl_texture(m_drawableTexHandle);
             m_drawableTexHandle = 0;
         }
+        static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer)->release();
         m_currentCmdBuffer = nullptr;
+        static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
         m_currentDrawable = nullptr;
         return;
     }
@@ -412,7 +431,10 @@ void CHW::Present()
     {
         Msg("* Present: no cmd buffer (drawable=%p texHandle=%u)", m_currentDrawable, m_drawableTexHandle);
         if (m_currentDrawable)
+        {
+            static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
             m_currentDrawable = nullptr;
+        }
         if (m_drawableTexHandle)
         {
             unregister_mtl_texture(m_drawableTexHandle);
@@ -445,7 +467,16 @@ void CHW::Present()
     {
         Msg("! Present: cmdBuffer is null after phase_flip, drawable=%p", drawable);
         // phase_flip could not create a new command buffer — nothing to present.
-        m_currentDrawable = nullptr;
+        if (m_currentCmdBuffer)
+        {
+            static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer)->release();
+            m_currentCmdBuffer = nullptr;
+        }
+        if (m_currentDrawable)
+        {
+            static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
+            m_currentDrawable = nullptr;
+        }
         if (m_drawableTexHandle) { unregister_mtl_texture(m_drawableTexHandle); m_drawableTexHandle = 0; }
         return;
     }
@@ -485,8 +516,16 @@ void CHW::Present()
         cmdBuffer->presentDrawable(drawable);
     cmdBuffer->commit();
 
-    m_currentCmdBuffer = nullptr;
-    m_currentDrawable = nullptr;
+    if (m_currentCmdBuffer)
+    {
+        static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer)->release();
+        m_currentCmdBuffer = nullptr;
+    }
+    if (m_currentDrawable)
+    {
+        static_cast<CA::MetalDrawable*>(m_currentDrawable)->release();
+        m_currentDrawable = nullptr;
+    }
     if (m_drawableTexHandle)
     {
         unregister_mtl_texture(m_drawableTexHandle);

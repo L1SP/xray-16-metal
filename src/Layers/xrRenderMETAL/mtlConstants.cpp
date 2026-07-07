@@ -119,8 +119,18 @@ static MslUniformMap parse_msl_uniforms(pcstr mslSource)
         else if (typeStr == "float3" || typeStr == "half3") cls = RC_1x3;
         else if (typeStr == "float2" || typeStr == "half2") cls = RC_1x2;
         else if (typeStr == "float" || typeStr == "half") cls = RC_1x1;
+        else if (typeStr.find("spvUnsafeArray<float4") != xr_string::npos) cls = RC_4x4;
+        else if (typeStr.find("spvUnsafeArray<float2") != xr_string::npos) cls = RC_2x4;
+        else if (typeStr.find("spvUnsafeArray<int") != xr_string::npos) cls = RC_int;
 
-        result[name] = { bufferIdx, cls };
+        // SPIRV-Cross renames GLSL array uniforms (like `float4x4 sbones_array[128]`)
+        // to `spvUnsafeArray<float4, N>& array [[buffer(N)]]` in MSL.
+        // Map the generic MSL name `array` back to the original GLSL name.
+        xr_string mappedName = name;
+        if (name == "array" && typeStr.find("spvUnsafeArray") != xr_string::npos)
+            mappedName = "sbones_array";
+
+        result[mappedName] = { bufferIdx, cls };
         pos = nend;
     }
     return result;
@@ -255,6 +265,26 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
     // by table.get(name.c_str()) which uses binary search (lower_bound).
     if (table.table.size() > 1)
     {
+        std::sort(table.table.begin(), table.table.end(),
+            [](const ref_constant& a, const ref_constant& b)
+            { return xr_strcmp(a->name.c_str(), b->name.c_str()) < 0; });
+    }
+
+    // If sbones_array wasn't found in MSL (compiled with SKIN_NONE, SPIRV-Cross omits
+    // it as unused), pre-seed it with a default location so SkeletonX::_Render's
+    // get_c("sbones_array") doesn't return null. The data uploaded to buffer 30 is
+    // harmless — the shader doesn't sample from it when SKIN_NONE is active.
+    if (!table.get("sbones_array"))
+    {
+        ref_constant C = table.table.emplace_back(xr_new<R_constant>());
+        C->name = "sbones_array";
+        C->destination = RC_dest_vertex;
+        C->type = RC_float;
+        R_constant_load& L = C->vs;
+        L.cls = RC_4x4;
+        L.location = 30;
+        L.index = 0;
+        // Re-sort to maintain binary search order
         std::sort(table.table.begin(), table.table.end(),
             [](const ref_constant& a, const ref_constant& b)
             { return xr_strcmp(a->name.c_str(), b->name.c_str()) < 0; });

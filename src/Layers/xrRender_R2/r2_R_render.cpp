@@ -48,9 +48,17 @@ void CRender::RenderMenu()
 #if defined(USE_METAL)
     HW.EndEncoding();
     if (auto* oldBuf = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer))
+    {
         oldBuf->commit();
+        oldBuf->release(); // balance BeginScene's retain
+    }
     if (auto* q = static_cast<MTL::CommandQueue*>(HW.m_cmdQueue))
-        HW.m_currentCmdBuffer = q->commandBuffer();
+    {
+        auto* newBuf = q->commandBuffer();
+        if (newBuf)
+            newBuf->retain();
+        HW.m_currentCmdBuffer = newBuf;
+    }
     HW.m_currentEncoder = nullptr;
     HW.m_currentRPD = nullptr;
 

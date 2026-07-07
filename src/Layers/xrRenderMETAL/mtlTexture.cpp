@@ -131,7 +131,9 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
     }
     if (!found)
     {
+#ifdef DEBUG
         Msg("! texture_load: '%s' not found in level/saves/textures, trying fallback", fRName);
+#endif
         if (FS.exist(fn, "$game_textures$", "ed\\ed_not_existing_texture", ".dds"))
             found = true;
     }
@@ -140,13 +142,17 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
         Msg("! texture_load: '%s' NOT FOUND (no fallback either)", fRName);
         return 0;
     }
-    Msg("* texture_load: '%s' -> '%s'", fRName, fn);
 
     IReader* S = FS.r_open(fn);
     if (!S)
         return 0;
 
     size_t img_size = S->length();
+    if (img_size == 0 || !S->pointer())
+    {
+        FS.r_close(S);
+        return 0;
+    }
     gli::texture texture = gli::load((char*)S->pointer(), img_size);
     FS.r_close(S);
 
@@ -164,12 +170,13 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
         return 0;
     }
 
-    // Expand A8/L8/LA8 single/dual-channel to full RGBA8 to match GL behavior:
-    //   GL A8 returns (1,1,1,A), L8 returns (L,L,L,1), LA8 returns (L,L,L,A)
-    //   Metal R8 returns (R,0,0,1), RG8 returns (R,G,0,1) — wrong for these types.
+    // Expand unsupported formats to RGBA8:
+    //   A8/L8/LA8 → RGBA8 (Metal R8/RG8 don't replicate channels like GL)
+    //   RGB8 → RGBA8 (Metal has no RGB8 format)
     {
         gli::format fmt = texture.format();
-        if (fmt == gli::FORMAT_A8_UNORM_PACK8 || fmt == gli::FORMAT_L8_UNORM_PACK8 || fmt == gli::FORMAT_LA8_UNORM_PACK8)
+        bool needsExpand = fmt == gli::FORMAT_A8_UNORM_PACK8 || fmt == gli::FORMAT_L8_UNORM_PACK8 || fmt == gli::FORMAT_LA8_UNORM_PACK8 || fmt == gli::FORMAT_RGB8_UNORM_PACK8 || fmt == gli::FORMAT_RGB8_SRGB_PACK8;
+        if (needsExpand)
         {
             gli::texture expanded(texture.target(), gli::FORMAT_RGBA8_UNORM_PACK8, texture.extent(), texture.layers(), texture.faces(), texture.levels());
             for (size_t level = 0; level < texture.levels(); ++level)
@@ -200,7 +207,7 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                         dst[i * 4 + 3] = 255;
                     }
                 }
-                else // LA8
+                else if (fmt == gli::FORMAT_LA8_UNORM_PACK8)
                 {
                     // LA8→RGBA8: (L,L,L,A)
                     for (size_t i = 0; i < count; ++i)
@@ -211,9 +218,19 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                         dst[i * 4 + 3] = src[i * 2 + 1];
                     }
                 }
+                else // RGB8_UNORM_PACK8 or RGB8_SRGB_PACK8 → RGBA8: (R,G,B,255)
+                {
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        dst[i * 4 + 0] = src[i * 3 + 0];
+                        dst[i * 4 + 1] = src[i * 3 + 1];
+                        dst[i * 4 + 2] = src[i * 3 + 2];
+                        dst[i * 4 + 3] = 255;
+                    }
+                }
             }
             texture = std::move(expanded);
-            mtlFormat = MTL::PixelFormatRGBA8Unorm;
+            mtlFormat = fmt == gli::FORMAT_RGB8_SRGB_PACK8 ? MTL::PixelFormatRGBA8Unorm_sRGB : MTL::PixelFormatRGBA8Unorm;
         }
     }
 
@@ -237,16 +254,16 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
     bool isArray = texture.target() == gli::TARGET_CUBE_ARRAY;
 
     NS::UInteger depth = 1;
-    NS::UInteger arrayLength = 1;
 
     if (isCube)
     {
         tdesc->setTextureType(isArray ? MTL::TextureTypeCubeArray : MTL::TextureTypeCube);
-        arrayLength = static_cast<NS::UInteger>(texture.faces() * texture.layers());
         if (isArray)
-            tdesc->setArrayLength(arrayLength);
-        else
-            tdesc->setArrayLength(texture.faces() > 1 ? texture.faces() : 1);
+        {
+            // For cube arrays: arrayLength = number of cubes = texture.layers()
+            tdesc->setArrayLength(static_cast<NS::UInteger>(texture.layers()));
+        }
+        // else: single cube, arrayLength defaults to 1 — don't set it
     }
     else if (is3D)
     {
@@ -314,7 +331,8 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                     int numBlocksX = (w + bdx - 1) / bdx;
                     int numBlocksY = (h + bdy - 1) / bdy;
                     bytesPerRow = static_cast<NS::UInteger>(numBlocksX) * static_cast<NS::UInteger>(bs);
-                    bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlocksY);
+                    if (is3D)
+                        bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlocksY);
                 }
                 else
                 {
@@ -331,9 +349,10 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                 if (expectedSize != sliceSize && sliceSize > 0 && numBlockRows > 0)
                 {
                     bytesPerRow = static_cast<NS::UInteger>(sliceSize / numBlockRows);
-                    bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlockRows);
+                    if (is3D)
+                        bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlockRows);
                 }
-                if (w < 1024) Msg("* upload level=%zu [%dx%d] bpr=%u bpi=%u sliceSize=%zu expected=%zu", level, w, h, (unsigned)bytesPerRow, (unsigned)bytesPerImage, sliceSize, expectedSize);
+
                 mtlTex->replaceRegion(region, static_cast<NS::UInteger>(level), slice, srcData, bytesPerRow, bytesPerImage);
             }
         }
