@@ -98,14 +98,14 @@ static MTL::PixelFormat gli_format_to_mtl(gli::format format)
     case gli::FORMAT_RGBA32_SFLOAT_PACK32:      return MTL::PixelFormatRGBA32Float;
     // Uncompressed unorm packed
     case gli::FORMAT_RGBA4_UNORM_PACK16:        return MTL::PixelFormatRGBA8Unorm;
-    case gli::FORMAT_BGRA4_UNORM_PACK16:        return MTL::PixelFormatBGRA8Unorm;
+    case gli::FORMAT_BGRA4_UNORM_PACK16:        return MTL::PixelFormatRGBA8Unorm;
     case gli::FORMAT_R5G6B5_UNORM_PACK16:       return MTL::PixelFormatRGBA8Unorm;
     case gli::FORMAT_B5G6R5_UNORM_PACK16:       return MTL::PixelFormatRGBA8Unorm;
     case gli::FORMAT_RGB5A1_UNORM_PACK16:       return MTL::PixelFormatRGBA8Unorm;
     case gli::FORMAT_BGR5A1_UNORM_PACK16:       return MTL::PixelFormatRGBA8Unorm;
     // Uncompressed unorm 10:10:10:2
     case gli::FORMAT_RGB10A2_UNORM_PACK32:      return MTL::PixelFormatRGB10A2Unorm;
-    case gli::FORMAT_BGR10A2_UNORM_PACK32:      return MTL::PixelFormatRGB10A2Unorm;
+    case gli::FORMAT_BGR10A2_UNORM_PACK32:      return MTL::PixelFormatRGBA8Unorm;
     default:                                    return MTL::PixelFormatInvalid;
     }
 }
@@ -173,9 +173,16 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
     // Expand unsupported formats to RGBA8:
     //   A8/L8/LA8 → RGBA8 (Metal R8/RG8 don't replicate channels like GL)
     //   RGB8 → RGBA8 (Metal has no RGB8 format)
+    //   16-bit packed formats (RGBA4, RGB5A1, R5G6B5) → RGBA8 (no native Metal equivalents)
     {
         gli::format fmt = texture.format();
-        bool needsExpand = fmt == gli::FORMAT_A8_UNORM_PACK8 || fmt == gli::FORMAT_L8_UNORM_PACK8 || fmt == gli::FORMAT_LA8_UNORM_PACK8 || fmt == gli::FORMAT_RGB8_UNORM_PACK8 || fmt == gli::FORMAT_RGB8_SRGB_PACK8;
+        bool is16bit = fmt == gli::FORMAT_RGBA4_UNORM_PACK16 || fmt == gli::FORMAT_BGRA4_UNORM_PACK16 ||
+            fmt == gli::FORMAT_R5G6B5_UNORM_PACK16 || fmt == gli::FORMAT_B5G6R5_UNORM_PACK16 ||
+            fmt == gli::FORMAT_RGB5A1_UNORM_PACK16 || fmt == gli::FORMAT_BGR5A1_UNORM_PACK16;
+        bool needsExpand = fmt == gli::FORMAT_A8_UNORM_PACK8 || fmt == gli::FORMAT_L8_UNORM_PACK8 ||
+            fmt == gli::FORMAT_LA8_UNORM_PACK8 || fmt == gli::FORMAT_RGB8_UNORM_PACK8 ||
+            fmt == gli::FORMAT_RGB8_SRGB_PACK8 || is16bit ||
+            fmt == gli::FORMAT_BGR10A2_UNORM_PACK32;
         if (needsExpand)
         {
             gli::texture expanded(texture.target(), gli::FORMAT_RGBA8_UNORM_PACK8, texture.extent(), texture.layers(), texture.faces(), texture.levels());
@@ -185,52 +192,128 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                 const uint8_t* src = static_cast<const uint8_t*>(texture.data(0, 0, level));
                 uint8_t* dst = static_cast<uint8_t*>(expanded.data(0, 0, level));
                 size_t count = static_cast<size_t>(ext.x) * static_cast<size_t>(ext.y);
-                if (fmt == gli::FORMAT_A8_UNORM_PACK8)
+                switch (fmt)
                 {
-                    // A8→RGBA8: (255,255,255,A)
+                case gli::FORMAT_A8_UNORM_PACK8:
+                    for (size_t i = 0; i < count; ++i)
+                    { dst[i * 4 + 0] = 255; dst[i * 4 + 1] = 255; dst[i * 4 + 2] = 255; dst[i * 4 + 3] = src[i]; }
+                    break;
+                case gli::FORMAT_L8_UNORM_PACK8:
+                    for (size_t i = 0; i < count; ++i)
+                    { dst[i * 4 + 0] = src[i]; dst[i * 4 + 1] = src[i]; dst[i * 4 + 2] = src[i]; dst[i * 4 + 3] = 255; }
+                    break;
+                case gli::FORMAT_LA8_UNORM_PACK8:
+                    for (size_t i = 0; i < count; ++i)
+                    { dst[i * 4 + 0] = src[i * 2 + 0]; dst[i * 4 + 1] = src[i * 2 + 0]; dst[i * 4 + 2] = src[i * 2 + 0]; dst[i * 4 + 3] = src[i * 2 + 1]; }
+                    break;
+                case gli::FORMAT_RGB8_UNORM_PACK8:
+                case gli::FORMAT_RGB8_SRGB_PACK8:
+                    for (size_t i = 0; i < count; ++i)
+                    { dst[i * 4 + 0] = src[i * 3 + 0]; dst[i * 4 + 1] = src[i * 3 + 1]; dst[i * 4 + 2] = src[i * 3 + 2]; dst[i * 4 + 3] = 255; }
+                    break;
+                case gli::FORMAT_RGBA4_UNORM_PACK16:
                     for (size_t i = 0; i < count; ++i)
                     {
-                        dst[i * 4 + 0] = 255;
-                        dst[i * 4 + 1] = 255;
-                        dst[i * 4 + 2] = 255;
-                        dst[i * 4 + 3] = src[i];
+                        u8 r = (src[i * 2 + 0] >> 4) & 0xF;
+                        u8 g = src[i * 2 + 0] & 0xF;
+                        u8 b = (src[i * 2 + 1] >> 4) & 0xF;
+                        u8 a = src[i * 2 + 1] & 0xF;
+                        dst[i * 4 + 0] = (r << 4) | r;
+                        dst[i * 4 + 1] = (g << 4) | g;
+                        dst[i * 4 + 2] = (b << 4) | b;
+                        dst[i * 4 + 3] = (a << 4) | a;
                     }
-                }
-                else if (fmt == gli::FORMAT_L8_UNORM_PACK8)
-                {
-                    // L8→RGBA8: (L,L,L,255)
+                    break;
+                case gli::FORMAT_BGRA4_UNORM_PACK16:
                     for (size_t i = 0; i < count; ++i)
                     {
-                        dst[i * 4 + 0] = src[i];
-                        dst[i * 4 + 1] = src[i];
-                        dst[i * 4 + 2] = src[i];
+                        u8 b = (src[i * 2 + 0] >> 4) & 0xF;
+                        u8 g = src[i * 2 + 0] & 0xF;
+                        u8 r = (src[i * 2 + 1] >> 4) & 0xF;
+                        u8 a = src[i * 2 + 1] & 0xF;
+                        dst[i * 4 + 0] = (r << 4) | r;
+                        dst[i * 4 + 1] = (g << 4) | g;
+                        dst[i * 4 + 2] = (b << 4) | b;
+                        dst[i * 4 + 3] = (a << 4) | a;
+                    }
+                    break;
+                case gli::FORMAT_R5G6B5_UNORM_PACK16:
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        u16 w = static_cast<u16>(src[i * 2 + 0]) | (static_cast<u16>(src[i * 2 + 1]) << 8);
+                        u8 r = static_cast<u8>((w >> 11) & 0x1F);
+                        u8 g = static_cast<u8>((w >> 5) & 0x3F);
+                        u8 b = static_cast<u8>(w & 0x1F);
+                        dst[i * 4 + 0] = (r << 3) | (r >> 2);
+                        dst[i * 4 + 1] = (g << 2) | (g >> 4);
+                        dst[i * 4 + 2] = (b << 3) | (b >> 2);
                         dst[i * 4 + 3] = 255;
                     }
-                }
-                else if (fmt == gli::FORMAT_LA8_UNORM_PACK8)
-                {
-                    // LA8→RGBA8: (L,L,L,A)
+                    break;
+                case gli::FORMAT_B5G6R5_UNORM_PACK16:
                     for (size_t i = 0; i < count; ++i)
                     {
-                        dst[i * 4 + 0] = src[i * 2 + 0];
-                        dst[i * 4 + 1] = src[i * 2 + 0];
-                        dst[i * 4 + 2] = src[i * 2 + 0];
-                        dst[i * 4 + 3] = src[i * 2 + 1];
-                    }
-                }
-                else // RGB8_UNORM_PACK8 or RGB8_SRGB_PACK8 → RGBA8: (R,G,B,255)
-                {
-                    for (size_t i = 0; i < count; ++i)
-                    {
-                        dst[i * 4 + 0] = src[i * 3 + 0];
-                        dst[i * 4 + 1] = src[i * 3 + 1];
-                        dst[i * 4 + 2] = src[i * 3 + 2];
+                        u16 w = static_cast<u16>(src[i * 2 + 0]) | (static_cast<u16>(src[i * 2 + 1]) << 8);
+                        u8 b = static_cast<u8>((w >> 11) & 0x1F);
+                        u8 g = static_cast<u8>((w >> 5) & 0x3F);
+                        u8 r = static_cast<u8>(w & 0x1F);
+                        dst[i * 4 + 0] = (r << 3) | (r >> 2);
+                        dst[i * 4 + 1] = (g << 2) | (g >> 4);
+                        dst[i * 4 + 2] = (b << 3) | (b >> 2);
                         dst[i * 4 + 3] = 255;
                     }
+                    break;
+                case gli::FORMAT_RGB5A1_UNORM_PACK16:
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        u16 w = static_cast<u16>(src[i * 2 + 0]) | (static_cast<u16>(src[i * 2 + 1]) << 8);
+                        u8 r = static_cast<u8>((w >> 11) & 0x1F);
+                        u8 g = static_cast<u8>((w >> 6) & 0x1F);
+                        u8 b = static_cast<u8>((w >> 1) & 0x1F);
+                        u8 a = static_cast<u8>(w & 0x01);
+                        dst[i * 4 + 0] = (r << 3) | (r >> 2);
+                        dst[i * 4 + 1] = (g << 3) | (g >> 2);
+                        dst[i * 4 + 2] = (b << 3) | (b >> 2);
+                        dst[i * 4 + 3] = a ? 255 : 0;
+                    }
+                    break;
+                case gli::FORMAT_BGR5A1_UNORM_PACK16:
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        u16 w = static_cast<u16>(src[i * 2 + 0]) | (static_cast<u16>(src[i * 2 + 1]) << 8);
+                        u8 b = static_cast<u8>((w >> 11) & 0x1F);
+                        u8 g = static_cast<u8>((w >> 6) & 0x1F);
+                        u8 r = static_cast<u8>((w >> 1) & 0x1F);
+                        u8 a = static_cast<u8>(w & 0x01);
+                        dst[i * 4 + 0] = (r << 3) | (r >> 2);
+                        dst[i * 4 + 1] = (g << 3) | (g >> 2);
+                        dst[i * 4 + 2] = (b << 3) | (b >> 2);
+                        dst[i * 4 + 3] = a ? 255 : 0;
+                    }
+                    break;
+                case gli::FORMAT_BGR10A2_UNORM_PACK32:
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        // BGR10A2: 32-bit word: B[9:0]G[9:0]R[9:0]A[1:0]
+                        u32 w = static_cast<u32>(src[i * 4 + 0]) | (static_cast<u32>(src[i * 4 + 1]) << 8) |
+                            (static_cast<u32>(src[i * 4 + 2]) << 16) | (static_cast<u32>(src[i * 4 + 3]) << 24);
+                        u8 b = static_cast<u8>((w >> 22) & 0xFF);
+                        u8 g = static_cast<u8>((w >> 12) & 0xFF);
+                        u8 r = static_cast<u8>((w >> 2) & 0xFF);
+                        u8 a = static_cast<u8>((w & 0x03) * 85);
+                        dst[i * 4 + 0] = r;
+                        dst[i * 4 + 1] = g;
+                        dst[i * 4 + 2] = b;
+                        dst[i * 4 + 3] = a;
+                    }
+                    break;
+                default:
+                    break;
                 }
             }
             texture = std::move(expanded);
-            mtlFormat = fmt == gli::FORMAT_RGB8_SRGB_PACK8 ? MTL::PixelFormatRGBA8Unorm_sRGB : MTL::PixelFormatRGBA8Unorm;
+            bool sRGB = fmt == gli::FORMAT_RGB8_SRGB_PACK8;
+            mtlFormat = sRGB ? MTL::PixelFormatRGBA8Unorm_sRGB : MTL::PixelFormatRGBA8Unorm;
         }
     }
 
@@ -339,9 +422,9 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                     bytesPerRow = static_cast<NS::UInteger>(w) * static_cast<NS::UInteger>(bs) / static_cast<NS::UInteger>(bdx > 0 ? bdx : 1);
                 }
 
-                // Compute per-slice data size (texture.size(level) includes all layers*faces)
-                size_t sliceCount = texture.layers() * texture.faces();
-                size_t sliceSize = sliceCount > 0 ? srcSize / sliceCount : srcSize;
+                // Compute per-slice data size
+                // NOTE: texture.size(Level) returns the size of ONE layer/face at this level (not all slices combined)
+                size_t sliceSize = srcSize;
                 size_t numBlockRows = static_cast<size_t>((h + bdy - 1) / bdy);
                 size_t expectedSize = static_cast<size_t>(bytesPerRow) * numBlockRows;
                 // Fallback: if our calculation doesn't match the actual per-slice size,
@@ -351,6 +434,18 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                     bytesPerRow = static_cast<NS::UInteger>(sliceSize / numBlockRows);
                     if (is3D)
                         bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlockRows);
+                }
+
+                NS::UInteger minBPR;
+                if (gli::is_compressed(texture.format()))
+                    minBPR = static_cast<NS::UInteger>((w + bdx - 1) / bdx) * static_cast<NS::UInteger>(bs);
+                else
+                    minBPR = static_cast<NS::UInteger>(w) * static_cast<NS::UInteger>(bs) / static_cast<NS::UInteger>(bdx > 0 ? bdx : 1);
+                if (bytesPerRow < minBPR)
+                {
+                    bytesPerRow = minBPR;
+                    if (is3D)
+                        bytesPerImage = minBPR * static_cast<NS::UInteger>((h + bdy - 1) / bdy);
                 }
 
                 mtlTex->replaceRegion(region, static_cast<NS::UInteger>(level), slice, srcData, bytesPerRow, bytesPerImage);

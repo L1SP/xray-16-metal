@@ -28,14 +28,23 @@ struct MTLPipelineKey
     u32 vsID;
     u32 psID;
     u32 declID;
-    bool blendEnabled;
+    u32 blendEnabled;  // 0/1
+    u32 colorPF[3];    // MTL::PixelFormat for attachments 0/1/2
+    u32 depthPF;       // MTL::PixelFormat for depth
+    u32 stencilPF;     // MTL::PixelFormat for stencil
+    u32 sampleCount;   // raster sample count
 
     bool operator<(const MTLPipelineKey& o) const
     {
         if (vsID != o.vsID) return vsID < o.vsID;
         if (psID != o.psID) return psID < o.psID;
         if (declID != o.declID) return declID < o.declID;
-        return blendEnabled < o.blendEnabled;
+        if (blendEnabled != o.blendEnabled) return blendEnabled < o.blendEnabled;
+        for (int i = 0; i < 3; i++)
+            if (colorPF[i] != o.colorPF[i]) return colorPF[i] < o.colorPF[i];
+        if (depthPF != o.depthPF) return depthPF < o.depthPF;
+        if (stencilPF != o.stencilPF) return stencilPF < o.stencilPF;
+        return sampleCount < o.sampleCount;
     }
 };
 
@@ -57,7 +66,34 @@ inline MTL::PrimitiveType TranslateTopology(D3DPRIMITIVETYPE T)
 
 inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 declID, u32 vbStride, SDeclaration* decl, bool blendEnabled)
 {
-    MTLPipelineKey key{ vsID, psID, declID, blendEnabled };
+    // Build key with pixel formats from current render pass descriptor
+    MTLPipelineKey key{};
+    key.vsID = vsID;
+    key.psID = psID;
+    key.declID = declID;
+    key.blendEnabled = blendEnabled ? 1u : 0u;
+
+    auto* rpd = static_cast<MTL::RenderPassDescriptor*>(HW.m_currentRPD);
+    if (rpd)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            auto* ca = rpd->colorAttachments()->object(i);
+            if (ca && ca->texture())
+                key.colorPF[i] = static_cast<u32>(ca->texture()->pixelFormat());
+        }
+        auto* da = rpd->depthAttachment();
+        if (da && da->texture())
+            key.depthPF = static_cast<u32>(da->texture()->pixelFormat());
+        auto* sa = rpd->stencilAttachment();
+        if (sa && sa->texture())
+            key.stencilPF = static_cast<u32>(sa->texture()->pixelFormat());
+        if (auto* tex = rpd->colorAttachments()->object(0)->texture())
+            key.sampleCount = static_cast<u32>(tex->sampleCount());
+    }
+    if (key.sampleCount == 0)
+        key.sampleCount = 1;
+
     auto it = s_pipelineCache.find(key);
     if (it != s_pipelineCache.end())
         return static_cast<MTL::RenderPipelineState*>(it->second);
@@ -71,26 +107,41 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
     MTL::RenderPipelineDescriptor* psoDesc = MTL::RenderPipelineDescriptor::alloc()->init();
     psoDesc->setVertexFunction(vsFunc);
     psoDesc->setFragmentFunction(psFunc);
+    psoDesc->setRasterSampleCount(key.sampleCount);
 
-    auto* layer = static_cast<CA::MetalLayer*>(HW.m_swapchain);
-    MTL::PixelFormat pf = layer ? layer->pixelFormat() : MTL::PixelFormatBGRA8Unorm;
-    psoDesc->colorAttachments()->object(0)->setPixelFormat(pf);
-    psoDesc->setRasterSampleCount(1);
-    auto* ca = psoDesc->colorAttachments()->object(0);
+    // Set pixel formats from the current render pass descriptor (must match exactly)
+    if (rpd)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            auto* ca = rpd->colorAttachments()->object(i);
+            if (ca && ca->texture())
+                psoDesc->colorAttachments()->object(i)->setPixelFormat(ca->texture()->pixelFormat());
+        }
+        auto* da = rpd->depthAttachment();
+        if (da && da->texture())
+            psoDesc->setDepthAttachmentPixelFormat(da->texture()->pixelFormat());
+        auto* sa = rpd->stencilAttachment();
+        if (sa && sa->texture())
+            psoDesc->setStencilAttachmentPixelFormat(sa->texture()->pixelFormat());
+    }
+
+    // Configure blend state for attachment 0
+    auto* ca0 = psoDesc->colorAttachments()->object(0);
     if (blendEnabled)
     {
-        ca->setBlendingEnabled(true);
-        ca->setRgbBlendOperation(MTL::BlendOperationAdd);
-        ca->setAlphaBlendOperation(MTL::BlendOperationAdd);
-        ca->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-        ca->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
-        ca->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
-        ca->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+        ca0->setBlendingEnabled(true);
+        ca0->setRgbBlendOperation(MTL::BlendOperationAdd);
+        ca0->setAlphaBlendOperation(MTL::BlendOperationAdd);
+        ca0->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+        ca0->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
+        ca0->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+        ca0->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
     }
     else
     {
-        ca->setBlendingEnabled(false);
-        ca->setWriteMask(MTL::ColorWriteMaskAll);
+        ca0->setBlendingEnabled(false);
+        ca0->setWriteMask(MTL::ColorWriteMaskAll);
     }
 
     MTL::VertexDescriptor* vertDesc = MTL::VertexDescriptor::alloc()->init();
