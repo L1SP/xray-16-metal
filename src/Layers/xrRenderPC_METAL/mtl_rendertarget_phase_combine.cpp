@@ -97,15 +97,10 @@ void CRenderTarget::phase_combine()
         float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
 
         FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
-        // Metal: negate Y because combine_1.vs negates Y (for GL) and then FLIP_VERTEX_Y
-        // negates Y again (for Metal). The double negation produces y = I.P.y, meaning
-        // the TL vertex (input y=1) goes to Metal's bottom of screen (Y=1 = bottom).
-        // Negating the input Y values cancels the double-negation: TL input y=-1 →
-        // shader negates to 1 → FLIP_VERTEX_Y negates to -1 → Metal's top of screen.
-        pv->set(-1, -1, 0, 1, 0, 0, scale_Y); pv++; // TL: y=-1
-        pv->set(-1, 1, 0, 0, 0, 0, 0); pv++;         // BL: y=1
-        pv->set(1, -1, 1, 1, 0, scale_X, scale_Y); pv++; // TR: y=-1
-        pv->set(1, 1, 1, 0, 0, scale_X, 0); pv++;    // BR: y=1
+        pv->set(-1, 1, 0, 1, 0, 0, scale_Y); pv++;
+        pv->set(-1, -1, 0, 0, 0, 0, 0); pv++;
+        pv->set(1, 1, 1, 1, 0, scale_X, scale_Y); pv++;
+        pv->set(1, -1, 1, 0, 0, scale_X, 0); pv++;
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 
         // Draw
@@ -208,8 +203,8 @@ void CRenderTarget::phase_combine()
         };
 
         v_aa* pv = (v_aa*)RImplementation.Vertex.Lock(4, g_aa_AA->vb_stride, Offset);
-        // LT
-        pv->p.set(EPS, EPS, EPS, 1.f);
+        // LB — screen bottom, needs uv.y = 1 (bottom of image)
+        pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
         pv->uv0.set(p0.x, p1.y);
         pv->uv1.set(p0.x - ddw, p1.y - ddh);
         pv->uv2.set(p0.x + ddw, p1.y + ddh);
@@ -218,8 +213,8 @@ void CRenderTarget::phase_combine()
         pv->uv5.set(p0.x - ddw, p1.y, p1.y, p0.x + ddw);
         pv->uv6.set(p0.x, p1.y - ddh, p1.y + ddh, p0.x);
         pv++;
-        // LB
-        pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
+        // LT — screen top, needs uv.y = 0 (top of image)
+        pv->p.set(EPS, EPS, EPS, 1.f);
         pv->uv0.set(p0.x, p0.y);
         pv->uv1.set(p0.x - ddw, p0.y - ddh);
         pv->uv2.set(p0.x + ddw, p0.y + ddh);
@@ -228,8 +223,8 @@ void CRenderTarget::phase_combine()
         pv->uv5.set(p0.x - ddw, p0.y, p0.y, p0.x + ddw);
         pv->uv6.set(p0.x, p0.y - ddh, p0.y + ddh, p0.x);
         pv++;
-        // RT
-        pv->p.set(float(_w + EPS), EPS, EPS, 1.f);
+        // RB — screen bottom, needs uv.y = 1 (bottom of image)
+        pv->p.set(float(_w + EPS), float(_h + EPS), EPS, 1.f);
         pv->uv0.set(p1.x, p1.y);
         pv->uv1.set(p1.x - ddw, p1.y - ddh);
         pv->uv2.set(p1.x + ddw, p1.y + ddh);
@@ -238,8 +233,8 @@ void CRenderTarget::phase_combine()
         pv->uv5.set(p1.x - ddw, p1.y, p1.y, p1.x + ddw);
         pv->uv6.set(p1.x, p1.y - ddh, p1.y + ddh, p1.x);
         pv++;
-        // RB
-        pv->p.set(float(_w + EPS), float(_h + EPS), EPS, 1.f);
+        // RT — screen top, needs uv.y = 0 (top of image)
+        pv->p.set(float(_w + EPS), EPS, EPS, 1.f);
         pv->uv0.set(p1.x, p0.y);
         pv->uv1.set(p1.x - ddw, p0.y - ddh);
         pv->uv2.set(p1.x + ddw, p0.y + ddh);
@@ -329,14 +324,13 @@ void CRenderTarget::phase_combine_volumetric()
         float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
 
         FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
-        // Same Y-negation as combine_1 — see comment in phase_combine
-        pv->set(-1, -1, 0, 1, 0, 0, scale_Y);
+        pv->set(-1, 1, 0, 1, 0, 0, scale_Y);
         pv++;
-        pv->set(-1, 1, 0, 0, 0, 0, 0);
+        pv->set(-1, -1, 0, 0, 0, 0, 0);
         pv++;
-        pv->set(1, -1, 1, 1, 0, scale_X, scale_Y);
+        pv->set(1, 1, 1, 1, 0, scale_X, scale_Y);
         pv++;
-        pv->set(1, 1, 1, 0, 0, scale_X, 0);
+        pv->set(1, -1, 1, 0, 0, scale_X, 0);
         pv++;
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 

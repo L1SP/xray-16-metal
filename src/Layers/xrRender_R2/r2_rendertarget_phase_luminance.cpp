@@ -59,7 +59,7 @@ void CRenderTarget::phase_luminance()
         // Fill vertex buffer
         v_build* pv = (v_build*)RImplementation.Vertex.Lock(4, g_bloom_build->vb_stride, Offset);
 
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(USE_METAL)
         pv->p.set(eps, float(ts + eps), eps, 1.f);
         pv->uv0.set(a_0.x, b_0.y);
         pv->uv1.set(a_1.x, b_1.y);
@@ -84,7 +84,7 @@ void CRenderTarget::phase_luminance()
         pv->uv2.set(b_2.x, a_2.y);
         pv->uv3.set(b_3.x, a_3.y);
         pv++;
-#elif defined(USE_OGL) || defined(USE_METAL)
+#elif defined(USE_OGL)
         pv->p.set(eps, eps, eps, 1.f);
         pv->uv0.set(a_0.x, a_0.y);
         pv->uv1.set(a_1.x, a_1.y);
@@ -135,7 +135,7 @@ void CRenderTarget::phase_luminance()
 
         // Fill vertex buffer
         v_filter* pv = (v_filter*)RImplementation.Vertex.Lock(4, g_bloom_filter->vb_stride, Offset);
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(USE_METAL)
         pv->p.set(eps, float(_ts + eps), eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, b[t].y, b[t + 8].y, a[t + 8].x); // xy/yx	- left+down
@@ -152,7 +152,7 @@ void CRenderTarget::phase_luminance()
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(b[t].x, a[t].y, a[t + 8].y, b[t + 8].x); // xy/yx	- right+up
         pv++;
-#elif defined(USE_OGL) || defined(USE_METAL)
+#elif defined(USE_OGL)
         pv->p.set(eps, eps, eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, a[t].y, a[t + 8].y, a[t + 8].x); // xy/yx	- left+up
@@ -196,7 +196,7 @@ void CRenderTarget::phase_luminance()
 
         // Fill vertex buffer
         v_filter* pv = (v_filter*)RImplementation.Vertex.Lock(4, g_bloom_filter->vb_stride, Offset);
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(USE_METAL)
         pv->p.set(eps, float(_ts + eps), eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, b[t].y, b[t + 8].y, a[t + 8].x); // xy/yx	- left+down
@@ -213,7 +213,7 @@ void CRenderTarget::phase_luminance()
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(b[t].x, a[t].y, a[t + 8].y, b[t + 8].x); // xy/yx	- right+up
         pv++;
-#elif defined(USE_OGL) || defined(USE_METAL)
+#elif defined(USE_OGL)
         pv->p.set(eps, eps, eps, 1.f);
         for (int t = 0; t < 8; t++)
             pv->uv[t].set(a[t].x, a[t].y, a[t + 8].y, a[t + 8].x); // xy/yx	- left+up
