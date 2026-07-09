@@ -416,8 +416,19 @@ void CHW::CreateEncoder(MTL::RenderPassDescriptor* rpd)
         enc->setViewport(vp);
     }
 
-    // New encoder loses all prior texture bindings; force rebind.
+    // New encoder starts with clean state; force C++ rebind cache invalidation.
     RCache.InvalidateTextureCache();
+}
+
+void CHW::NullifyMetalTextures()
+{
+    auto* enc = static_cast<MTL::RenderCommandEncoder*>(m_currentEncoder);
+    if (!enc)
+        return;
+    for (u32 i = 0; i < CTexture::mtMaxPixelShaderTextures; ++i)
+        enc->setFragmentTexture(nullptr, i);
+    for (u32 i = 0; i < CTexture::mtMaxVertexShaderTextures; ++i)
+        enc->setVertexTexture(nullptr, i);
 }
 
 void CHW::EndScene()

@@ -131,7 +131,19 @@ public:
         if (C->destination & RC_dest_vertex)  L = C->vs;
         if (C->destination & RC_dest_geometry) L = C->gs;
         if (C->destination & RC_dest_all)     L = C->pp;
-        append_at_offset(C, L, &A, sizeof(Fmatrix), e * sizeof(Fmatrix));
+        if (L.cls == RC_3x4)
+        {
+            float data[12];
+            data[0] = A._11; data[1] = A._21; data[2] = A._31;
+            data[3] = A._12; data[4] = A._22; data[5] = A._32;
+            data[6] = A._13; data[7] = A._23; data[8] = A._33;
+            data[9] = A._41; data[10] = A._42; data[11] = A._43;
+            append_at_offset(C, L, data, 48, e * 48);
+        }
+        else
+        {
+            append_at_offset(C, L, &A, sizeof(Fmatrix), e * sizeof(Fmatrix));
+        }
     }
 
     ICF void seta(R_constant* C, u32 e, const Fvector4& A)

@@ -1,6 +1,2 @@
-// metal-cpp requires exactly one TU with private implementations
-#define NS_PRIVATE_IMPLEMENTATION
-#define CA_PRIVATE_IMPLEMENTATION
-#define MTL_PRIVATE_IMPLEMENTATION
-
+// metal-cpp private implementations are in mtlPrivateImpl.cpp
 #include "stdafx.h"

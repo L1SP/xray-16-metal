@@ -76,44 +76,32 @@ void glState::Apply()
         }
     }
 
-    // Build combined depth-stencil state (single encoder call avoids clobbering)
-    MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
-    if (m_pDepthStencilState.DepthEnable)
-    {
-        dsDesc->setDepthCompareFunction(
-            static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(m_pDepthStencilState.DepthFunc)));
-        dsDesc->setDepthWriteEnabled(m_pDepthStencilState.DepthWriteMask ? true : false);
-    }
-    else
-    {
-        dsDesc->setDepthCompareFunction(MTL::CompareFunctionAlways);
-        dsDesc->setDepthWriteEnabled(false);
-    }
-    if (m_pDepthStencilState.StencilEnable)
-    {
-        auto* stencilDesc = dsDesc->backFaceStencil();
-        stencilDesc->setStencilCompareFunction(
-            static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(m_pDepthStencilState.StencilFunc)));
-        stencilDesc->setStencilFailureOperation(
-            static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(m_pDepthStencilState.StencilFailOp)));
-        stencilDesc->setDepthFailureOperation(
-            static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(m_pDepthStencilState.StencilDepthFailOp)));
-        stencilDesc->setDepthStencilPassOperation(
-            static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(m_pDepthStencilState.StencilPassOp)));
-        stencilDesc->setReadMask(m_pDepthStencilState.StencilMask);
-        stencilDesc->setWriteMask(m_pDepthStencilState.StencilWriteMask);
-    }
-    auto* device = static_cast<MTL::Device*>(HW.m_device);
-    auto* dsState = device->newDepthStencilState(dsDesc);
-    if (dsState)
-    {
-        enc->setDepthStencilState(dsState);
-        dsState->release();
-    }
-    dsDesc->release();
+    // Transfer depth-stencil state to RCache — ApplyDS() builds combined state
+    RCache.set_Z(m_pDepthStencilState.DepthEnable);
+    RCache.set_ZFunc(m_pDepthStencilState.DepthFunc);
+    RCache.set_ZWritable(m_pDepthStencilState.DepthWriteMask);
+    RCache.set_Stencil(
+        m_pDepthStencilState.StencilEnable,
+        m_pDepthStencilState.StencilFunc,
+        m_pDepthStencilState.StencilRef,
+        m_pDepthStencilState.StencilMask,
+        m_pDepthStencilState.StencilWriteMask,
+        m_pDepthStencilState.StencilFailOp,
+        m_pDepthStencilState.StencilPassOp,
+        m_pDepthStencilState.StencilDepthFailOp
+    );
 
+    // Rasterizer
     RCache.set_CullMode(rasterizerCullMode);
+
+    // Blend state — full params (PSO consumes at draw time)
     RCache.set_BlendEnable(m_pBlendState.BlendEnable);
+    RCache.set_SrcBlend(m_pBlendState.SrcBlend);
+    RCache.set_DestBlend(m_pBlendState.DestBlend);
+    RCache.set_BlendOp(m_pBlendState.BlendOp);
+    RCache.set_SrcBlendAlpha(m_pBlendState.SrcBlendAlpha);
+    RCache.set_DestBlendAlpha(m_pBlendState.DestBlendAlpha);
+    RCache.set_BlendOpAlpha(m_pBlendState.BlendOpAlpha);
     RCache.set_ColorWriteEnable(m_pBlendState.ColorMask);
 }
 

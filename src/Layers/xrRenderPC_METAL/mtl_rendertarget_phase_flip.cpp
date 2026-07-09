@@ -14,6 +14,9 @@ void CRenderTarget::phase_flip()
         return;
     }
 
+    float gamma, brightness, contrast;
+    gamma = ps_gamma; brightness = ps_brightness; contrast = ps_contrast;
+
     const u32 baseHandle = get_base_rt();
     auto* dstTex = lookup_mtl_texture(HW.m_drawableTexHandle);
     if (!baseHandle || !dstTex)
@@ -21,21 +24,6 @@ void CRenderTarget::phase_flip()
         Msg("! phase_flip: baseHandle=%u dstTex=%p", baseHandle, (void*)dstTex);
         return;
     }
-
-    // Always use the gamma PSO path so gamma/brightness/contrast sliders work.
-    // FLIP_VERTEX_Y=true in shader compilation flips the vertex positions,
-    // which also flips the interpolated UV — the gamma pass renders the source
-    // texture upside-down into rt_Generic_0.  The layer's CATransform3DMakeScale
-    // then flips the drawable upright for the user.
-    //
-    // On Apple Silicon TBDR, a texture just used as a render target cannot be
-    // sampled via a fragment shader in the same command buffer — the tile-cache
-    // dirty flags cause the sampler to silently return 0 (black). We commit the
-    // current buffer (which resolves get_base_rt() to memory) and start a fresh
-    // one for the gamma pass.
-
-    float gamma, brightness, contrast;
-    gamma = ps_gamma; brightness = ps_brightness; contrast = ps_contrast;
 
     if (!m_gamma_render_pso)
     {

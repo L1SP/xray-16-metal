@@ -29,6 +29,13 @@ struct MTLPipelineKey
     u32 psID;
     u32 declID;
     u32 blendEnabled;  // 0/1
+    u32 srcBlend;
+    u32 destBlend;
+    u32 blendOp;
+    u32 srcBlendAlpha;
+    u32 destBlendAlpha;
+    u32 blendOpAlpha;
+    u32 colorWriteMask;
     u32 colorPF[3];    // MTL::PixelFormat for attachments 0/1/2
     u32 depthPF;       // MTL::PixelFormat for depth
     u32 stencilPF;     // MTL::PixelFormat for stencil
@@ -40,6 +47,13 @@ struct MTLPipelineKey
         if (psID != o.psID) return psID < o.psID;
         if (declID != o.declID) return declID < o.declID;
         if (blendEnabled != o.blendEnabled) return blendEnabled < o.blendEnabled;
+        if (srcBlend != o.srcBlend) return srcBlend < o.srcBlend;
+        if (destBlend != o.destBlend) return destBlend < o.destBlend;
+        if (blendOp != o.blendOp) return blendOp < o.blendOp;
+        if (srcBlendAlpha != o.srcBlendAlpha) return srcBlendAlpha < o.srcBlendAlpha;
+        if (destBlendAlpha != o.destBlendAlpha) return destBlendAlpha < o.destBlendAlpha;
+        if (blendOpAlpha != o.blendOpAlpha) return blendOpAlpha < o.blendOpAlpha;
+        if (colorWriteMask != o.colorWriteMask) return colorWriteMask < o.colorWriteMask;
         for (int i = 0; i < 3; i++)
             if (colorPF[i] != o.colorPF[i]) return colorPF[i] < o.colorPF[i];
         if (depthPF != o.depthPF) return depthPF < o.depthPF;
@@ -64,7 +78,10 @@ inline MTL::PrimitiveType TranslateTopology(D3DPRIMITIVETYPE T)
     }
 }
 
-inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 declID, u32 vbStride, SDeclaration* decl, bool blendEnabled)
+inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 declID, u32 vbStride, SDeclaration* decl,
+    bool blendEnabled, u32 srcBlend, u32 destBlend, u32 blendOp,
+    u32 srcBlendAlpha, u32 destBlendAlpha, u32 blendOpAlpha,
+    u32 colorWriteMask)
 {
     // Build key with pixel formats from current render pass descriptor
     MTLPipelineKey key{};
@@ -72,6 +89,13 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
     key.psID = psID;
     key.declID = declID;
     key.blendEnabled = blendEnabled ? 1u : 0u;
+    key.srcBlend = (srcBlend != u32(-1)) ? srcBlend : D3DBLEND_ONE;
+    key.destBlend = (destBlend != u32(-1)) ? destBlend : D3DBLEND_ZERO;
+    key.blendOp = (blendOp != u32(-1)) ? blendOp : D3DBLENDOP_ADD;
+    key.srcBlendAlpha = (srcBlendAlpha != u32(-1)) ? srcBlendAlpha : D3DBLEND_ONE;
+    key.destBlendAlpha = (destBlendAlpha != u32(-1)) ? destBlendAlpha : D3DBLEND_ZERO;
+    key.blendOpAlpha = (blendOpAlpha != u32(-1)) ? blendOpAlpha : D3DBLENDOP_ADD;
+    key.colorWriteMask = (colorWriteMask != u32(-1)) ? colorWriteMask : 0xF;
 
     auto* rpd = static_cast<MTL::RenderPassDescriptor*>(HW.m_currentRPD);
     if (rpd)
@@ -126,28 +150,34 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
             psoDesc->setStencilAttachmentPixelFormat(sa->texture()->pixelFormat());
     }
 
-    // Configure blend state for attachment 0
+    // Configure blend state for attachment 0 from each member
     auto* ca0 = psoDesc->colorAttachments()->object(0);
-    if (blendEnabled)
+    if (key.blendEnabled)
     {
         ca0->setBlendingEnabled(true);
-        ca0->setRgbBlendOperation(MTL::BlendOperationAdd);
-        ca0->setAlphaBlendOperation(MTL::BlendOperationAdd);
-        ca0->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
-        ca0->setSourceAlphaBlendFactor(MTL::BlendFactorSourceAlpha);
-        ca0->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
-        ca0->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+        ca0->setRgbBlendOperation(
+            static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOp)));
+        ca0->setAlphaBlendOperation(
+            static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOpAlpha)));
+        ca0->setSourceRGBBlendFactor(
+            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlend)));
+        ca0->setSourceAlphaBlendFactor(
+            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlendAlpha)));
+        ca0->setDestinationRGBBlendFactor(
+            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlend)));
+        ca0->setDestinationAlphaBlendFactor(
+            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlendAlpha)));
     }
     else
     {
         ca0->setBlendingEnabled(false);
-        ca0->setWriteMask(MTL::ColorWriteMaskAll);
     }
+    ca0->setWriteMask(static_cast<MTL::ColorWriteMask>(key.colorWriteMask));
 
     MTL::VertexDescriptor* vertDesc = MTL::VertexDescriptor::alloc()->init();
+    u32 maxAttr = 0;
     if (decl && !decl->dcl_code.empty())
     {
-        u32 maxAttr = 0;
         for (const auto& elem : decl->dcl_code)
         {
             if (elem.Stream != 0)
@@ -478,6 +508,11 @@ ICF void CBackend::set_PP(u32 _pp, pcstr _n)
 
 ICF void CBackend::set_Vertices(VertexBufferHandle _vb, u32 _vb_stride)
 {
+    // Resolve stale SGeometry::vb handles (cached at load time) to the current
+    // dynamic stream ring buffer slot. The ring advances on every FLUSH-LOCK.
+    auto* resolved = resolve_stream_buffer(static_cast<MTL::Buffer*>(_vb));
+    _vb = resolved;
+
     if (vb != _vb || vb_stride != _vb_stride)
     {
         PGO(Msg("PGO:VB:%x,%d", _vb, _vb_stride));
@@ -508,8 +543,8 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     stat.render.polys += PC;
 
     auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
-    auto* mtlVB = static_cast<MTL::Buffer*>(vb);
     auto* mtlIB = static_cast<MTL::Buffer*>(ib);
+    auto* mtlVB = resolve_stream_buffer(static_cast<MTL::Buffer*>(vb));
     if (!enc || !mtlVB || !mtlIB)
     {
         Msg("! Render indexed skipped: enc=%p vb=%p ib=%p blend=%u T=%d baseV=%u countV=%u PC=%u",
@@ -517,7 +552,11 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
         return;
     }
 
-    auto* pso = get_or_create_pipeline(vs, ps, decl ? decl->dcl : 0, vb_stride, decl, blendEnabled);
+    auto* pso = get_or_create_pipeline(
+        vs, ps, decl ? decl->dcl : 0, vb_stride, decl,
+        blendEnabled, srcBlend, destBlend, blendOp,
+        srcBlendAlpha, destBlendAlpha, blendOpAlpha,
+        colorwrite_mask);
     if (!pso)
     {
         Msg("! CBackend::Render indexed: PSO null for vs=%u ps=%u blend=%u", vs, ps, blendEnabled);
@@ -525,6 +564,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     }
 
     enc->setRenderPipelineState(pso);
+    ApplyDS();
     enc->setVertexBuffer(mtlVB, 0, 30);
     constants.flush();
 
@@ -553,7 +593,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
     stat.render.polys += PC;
 
     auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
-    auto* mtlVB = static_cast<MTL::Buffer*>(vb);
+    auto* mtlVB = resolve_stream_buffer(static_cast<MTL::Buffer*>(vb));
     if (!enc || !mtlVB)
     {
         Msg("! CBackend::Render non-indexed: no encoder or vb (enc=%p vb=%p)", (void*)enc, (void*)mtlVB);
@@ -562,7 +602,11 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
 
     u32 vsID = vs;
     u32 psID = ps;
-    auto* pso = get_or_create_pipeline(vsID, psID, decl ? decl->dcl : 0, vb_stride, decl, blendEnabled);
+    auto* pso = get_or_create_pipeline(
+        vsID, psID, decl ? decl->dcl : 0, vb_stride, decl,
+        blendEnabled, srcBlend, destBlend, blendOp,
+        srcBlendAlpha, destBlendAlpha, blendOpAlpha,
+        colorwrite_mask);
     if (!pso)
     {
         Msg("! CBackend::Render non-indexed: PSO null for vs=%u ps=%u decl=%u stride=%u blend=%u", vsID, psID, decl ? decl->dcl : 0, vb_stride, blendEnabled);
@@ -570,6 +614,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
     }
 
     enc->setRenderPipelineState(pso);
+    ApplyDS();
     enc->setVertexBuffer(mtlVB, 0, 30);
     constants.flush();
 
@@ -632,13 +677,49 @@ IC void CBackend::SetViewport(const D3D_VIEWPORT& viewport) const
     enc->setViewport(vp);
 }
 
-IC void CBackend::set_Stencil(u32 _enable, u32 _func, u32 _ref, u32 _mask, u32 _writemask, u32 _fail, u32 _pass,
-                              u32 _zfail)
+IC void CBackend::ApplyDS()
 {
     auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
     if (!enc)
         return;
 
+    MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
+
+    bool depthTest = (z_enable == 1); // explicit set_Z(TRUE) only; u32(-1) defaults to no depth
+    bool depthWrite = depthTest && (z_write == 1); // explicit set_ZWritable(TRUE); u32(-1) defaults to no write
+    dsDesc->setDepthCompareFunction(depthTest && z_func != u32(-1)
+        ? static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(z_func))
+        : MTL::CompareFunctionAlways);
+    dsDesc->setDepthWriteEnabled(depthWrite);
+
+    auto* stencilDesc = dsDesc->backFaceStencil();
+    bool stlEnable = (stencil_enable == 1);
+    stencilDesc->setStencilCompareFunction(stlEnable
+        ? static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(stencil_func))
+        : MTL::CompareFunctionAlways);
+    stencilDesc->setStencilFailureOperation(
+        static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(stlEnable ? stencil_fail : D3DSTENCILOP_KEEP)));
+    stencilDesc->setDepthFailureOperation(
+        static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(stlEnable ? stencil_zfail : D3DSTENCILOP_KEEP)));
+    stencilDesc->setDepthStencilPassOperation(
+        static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(stlEnable ? stencil_pass : D3DSTENCILOP_KEEP)));
+    stencilDesc->setReadMask(stlEnable ? stencil_mask : 0);
+    stencilDesc->setWriteMask(stlEnable ? stencil_writemask : 0);
+
+    auto* device = static_cast<MTL::Device*>(HW.m_device);
+    auto* dsState = device->newDepthStencilState(dsDesc);
+    if (dsState)
+    {
+        enc->setDepthStencilState(dsState);
+        enc->setStencilReferenceValue(stencil_ref);
+        dsState->release();
+    }
+    dsDesc->release();
+}
+
+IC void CBackend::set_Stencil(u32 _enable, u32 _func, u32 _ref, u32 _mask, u32 _writemask, u32 _fail, u32 _pass,
+                              u32 _zfail)
+{
     stencil_enable = _enable;
     stencil_func = _func;
     stencil_ref = _ref;
@@ -648,35 +729,7 @@ IC void CBackend::set_Stencil(u32 _enable, u32 _func, u32 _ref, u32 _mask, u32 _
     stencil_pass = _pass;
     stencil_zfail = _zfail;
 
-    enc->setStencilReferenceValue(_ref);
-
-    MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
-    if (_enable)
-    {
-        auto* stencilDesc = dsDesc->backFaceStencil();
-        stencilDesc->setStencilCompareFunction(static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(_func)));
-        stencilDesc->setStencilFailureOperation(static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(_fail)));
-        stencilDesc->setDepthFailureOperation(static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(_zfail)));
-        stencilDesc->setDepthStencilPassOperation(static_cast<MTL::StencilOperation>(mtlStateUtils::ConvertStencilOp(_pass)));
-        stencilDesc->setReadMask(_mask);
-        stencilDesc->setWriteMask(_writemask);
-        dsDesc->setDepthCompareFunction(MTL::CompareFunctionAlways);
-        dsDesc->setDepthWriteEnabled(false);
-    }
-    else
-    {
-        dsDesc->setDepthCompareFunction(MTL::CompareFunctionAlways);
-        dsDesc->setDepthWriteEnabled(false);
-    }
-
-    auto* device = static_cast<MTL::Device*>(HW.m_device);
-    auto* dsState = device->newDepthStencilState(dsDesc);
-    if (dsState)
-    {
-        enc->setDepthStencilState(dsState);
-        dsState->release();
-    }
-    dsDesc->release();
+    ApplyDS();
 }
 
 IC void CBackend::set_Z(u32 _enable)
@@ -684,24 +737,7 @@ IC void CBackend::set_Z(u32 _enable)
     if (z_enable == _enable)
         return;
     z_enable = _enable;
-
-    auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
-    if (!enc)
-        return;
-
-    MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
-    dsDesc->setDepthCompareFunction(z_enable && z_func != u32(-1)
-        ? static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(z_func))
-        : MTL::CompareFunctionAlways);
-    dsDesc->setDepthWriteEnabled(z_enable);
-    auto* device = static_cast<MTL::Device*>(HW.m_device);
-    auto* dsState = device->newDepthStencilState(dsDesc);
-    if (dsState)
-    {
-        enc->setDepthStencilState(dsState);
-        dsState->release();
-    }
-    dsDesc->release();
+    ApplyDS();
 }
 
 IC void CBackend::set_ZFunc(u32 _func)
@@ -709,24 +745,15 @@ IC void CBackend::set_ZFunc(u32 _func)
     if (z_func == _func)
         return;
     z_func = _func;
+    ApplyDS();
+}
 
-    auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
-    if (!enc)
+IC void CBackend::set_ZWritable(u32 _enable)
+{
+    if (z_write == _enable)
         return;
-
-    MTL::DepthStencilDescriptor* dsDesc = MTL::DepthStencilDescriptor::alloc()->init();
-    dsDesc->setDepthCompareFunction(z_enable
-        ? static_cast<MTL::CompareFunction>(mtlStateUtils::ConvertCmpFunction(z_func))
-        : MTL::CompareFunctionAlways);
-    dsDesc->setDepthWriteEnabled(z_enable);
-    auto* device = static_cast<MTL::Device*>(HW.m_device);
-    auto* dsState = device->newDepthStencilState(dsDesc);
-    if (dsState)
-    {
-        enc->setDepthStencilState(dsState);
-        dsState->release();
-    }
-    dsDesc->release();
+    z_write = _enable;
+    ApplyDS();
 }
 
 IC void CBackend::set_AlphaRef(u32 _value)
@@ -761,6 +788,13 @@ ICF void CBackend::set_BlendEnable(bool _enable)
 {
     blendEnabled = _enable;
 }
+
+ICF void CBackend::set_SrcBlend(u32 v) { srcBlend = v; }
+ICF void CBackend::set_DestBlend(u32 v) { destBlend = v; }
+ICF void CBackend::set_BlendOp(u32 v) { blendOp = v; }
+ICF void CBackend::set_SrcBlendAlpha(u32 v) { srcBlendAlpha = v; }
+ICF void CBackend::set_DestBlendAlpha(u32 v) { destBlendAlpha = v; }
+ICF void CBackend::set_BlendOpAlpha(u32 v) { blendOpAlpha = v; }
 
 ICF void CBackend::set_FillMode(u32 _mode)
 {

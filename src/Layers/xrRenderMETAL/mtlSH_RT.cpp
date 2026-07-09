@@ -56,20 +56,6 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount, u32 sl
     }
 
     MTL::PixelFormat pf = D3DFormatToMetal(f);
-    // rt_Generic_1 is the distortion map sampled by .xy in distort.ps.
-    // D3DFMT_A8R8G8B8 maps to BGRA8Unorm on Metal, which swaps output channels
-    // (output[0]→B, output[1]→G, output[2]→R) while the shader reads .r from byte 2 (=0).
-    // Force RGBA8Unorm so output[0]=R_mag lands in byte 0, matching .r read.
-    if (pf == MTL::PixelFormatBGRA8Unorm && Name && xr_strcmp(Name, "$user$generic1") == 0)
-    {
-        pf = MTL::PixelFormatRGBA8Unorm;
-        Msg("* CRT::create: forced RGBA8Unorm for %s", Name);
-    }
-    if (pf == MTL::PixelFormatBGRA8Unorm && Name && xr_strcmp(Name, "$user$generic1_r") == 0)
-    {
-        pf = MTL::PixelFormatRGBA8Unorm;
-        Msg("* CRT::create: forced RGBA8Unorm for %s", Name);
-    }
     bool isDepth = (f == D3DFMT_D24S8 || f == D3DFMT_D32 || f == D3DFMT_D16 || f == D3DFMT_D24X8);
 
     MTL::TextureDescriptor* desc = MTL::TextureDescriptor::alloc()->init();
@@ -78,7 +64,7 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount, u32 sl
     desc->setWidth(w);
     desc->setHeight(h);
     desc->setStorageMode(MTL::StorageModePrivate);
-    desc->setUsage(isDepth ? MTL::TextureUsageUnknown : MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
+    desc->setUsage(isDepth ? MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead : MTL::TextureUsageShaderRead | MTL::TextureUsageRenderTarget);
 
     MTL::Texture* tex = device->newTexture(desc);
     desc->release();

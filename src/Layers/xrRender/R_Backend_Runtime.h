@@ -141,6 +141,9 @@ IC void CBackend::set_Pass(SPass* P)
 #endif
     }
     set_Constants(P->constants);
+#if defined(USE_METAL)
+    InvalidateTextureCache();
+#endif
     set_Textures(P->T);
     set_Matrices(P->M);
 }

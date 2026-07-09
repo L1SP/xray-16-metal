@@ -5,6 +5,39 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+namespace
+{
+static constexpr u32 kStreamRingSize = 3;
+
+struct VertexRingState
+{
+    MTL::Buffer* buffers[kStreamRingSize] = {};
+    MTL::Buffer* initialHandle = nullptr;
+    u32 current = 0;
+};
+
+struct IndexRingState
+{
+    MTL::Buffer* buffers[kStreamRingSize] = {};
+    MTL::Buffer* initialHandle = nullptr;
+    u32 current = 0;
+};
+
+static xr_map<VertexStreamBuffer*, VertexRingState> s_vertexRings;
+static xr_map<IndexStreamBuffer*, IndexRingState> s_indexRings;
+
+// Handle redirect: maps the initial (load-time) handle to the current ring buffer slot.
+// Geometry objects cache SGeometry::vb at load time; this table redirects stale handles
+// to the active ring buffer at resolve time (set_Vertices).
+static xr_map<MTL::Buffer*, MTL::Buffer*> s_streamRedirect;
+} // anonymous namespace
+
+// --- public redirect resolver ---
+MTL::Buffer* resolve_stream_buffer(MTL::Buffer* handle)
+{
+    auto it = s_streamRedirect.find(handle);
+    return (it != s_streamRedirect.end()) ? it->second : handle;
+}
 u32 GetFVFVertexSize(u32 FVF)
 {
     // TODO: Implement FVF vertex size calculation
@@ -201,24 +234,50 @@ void VertexStreamBuffer::Create(size_t size)
     auto* device = static_cast<MTL::Device*>(HW.m_device);
     if (device)
     {
-        auto* buffer = device->newBuffer(size, MTL::ResourceStorageModeShared);
-        m_DeviceBuffer = buffer;
+        auto& ring = s_vertexRings[this];
+        for (u32 i = 0; i < kStreamRingSize; i++)
+        {
+            ring.buffers[i] = device->newBuffer(size, MTL::ResourceStorageModeShared);
+        }
+        ring.current = 0;
+        ring.initialHandle = ring.buffers[0];
+        m_DeviceBuffer = ring.buffers[0];
+        s_streamRedirect[ring.initialHandle] = ring.buffers[0];
     }
     AddRef();
 }
 
 void VertexStreamBuffer::Destroy()
 {
-    if (m_DeviceBuffer)
+    auto it = s_vertexRings.find(this);
+    if (it != s_vertexRings.end())
     {
-        auto* buffer = static_cast<MTL::Buffer*>(m_DeviceBuffer);
-        buffer->release();
-        m_DeviceBuffer = nullptr;
+        for (u32 i = 0; i < kStreamRingSize; i++)
+        {
+            if (it->second.buffers[i])
+            {
+                it->second.buffers[i]->release();
+                it->second.buffers[i] = nullptr;
+            }
+        }
+        s_vertexRings.erase(it);
     }
+    m_DeviceBuffer = nullptr;
 }
 
 void* VertexStreamBuffer::Map(size_t offset, size_t size, bool flush)
 {
+    if (flush)
+    {
+        auto it = s_vertexRings.find(this);
+        if (it != s_vertexRings.end())
+        {
+            it->second.current = (it->second.current + 1) % kStreamRingSize;
+            m_DeviceBuffer = it->second.buffers[it->second.current];
+            // Redirect all geometries with the initial handle to the current buffer
+            s_streamRedirect[it->second.initialHandle] = static_cast<MTL::Buffer*>(m_DeviceBuffer);
+        }
+    }
     auto* buffer = static_cast<MTL::Buffer*>(m_DeviceBuffer);
     if (!buffer)
         return nullptr;
@@ -244,24 +303,49 @@ void IndexStreamBuffer::Create(size_t size)
     auto* device = static_cast<MTL::Device*>(HW.m_device);
     if (device)
     {
-        auto* buffer = device->newBuffer(size, MTL::ResourceStorageModeShared);
-        m_DeviceBuffer = buffer;
+        auto& ring = s_indexRings[this];
+        for (u32 i = 0; i < kStreamRingSize; i++)
+        {
+            ring.buffers[i] = device->newBuffer(size, MTL::ResourceStorageModeShared);
+        }
+        ring.current = 0;
+        ring.initialHandle = ring.buffers[0];
+        m_DeviceBuffer = ring.buffers[0];
+        s_streamRedirect[ring.initialHandle] = ring.buffers[0];
     }
     AddRef();
 }
 
 void IndexStreamBuffer::Destroy()
 {
-    if (m_DeviceBuffer)
+    auto it = s_indexRings.find(this);
+    if (it != s_indexRings.end())
     {
-        auto* buffer = static_cast<MTL::Buffer*>(m_DeviceBuffer);
-        buffer->release();
-        m_DeviceBuffer = nullptr;
+        for (u32 i = 0; i < kStreamRingSize; i++)
+        {
+            if (it->second.buffers[i])
+            {
+                it->second.buffers[i]->release();
+                it->second.buffers[i] = nullptr;
+            }
+        }
+        s_indexRings.erase(it);
     }
+    m_DeviceBuffer = nullptr;
 }
 
 void* IndexStreamBuffer::Map(size_t offset, size_t size, bool flush)
 {
+    if (flush)
+    {
+        auto it = s_indexRings.find(this);
+        if (it != s_indexRings.end())
+        {
+            it->second.current = (it->second.current + 1) % kStreamRingSize;
+            m_DeviceBuffer = it->second.buffers[it->second.current];
+            s_streamRedirect[it->second.initialHandle] = static_cast<MTL::Buffer*>(m_DeviceBuffer);
+        }
+    }
     auto* buffer = static_cast<MTL::Buffer*>(m_DeviceBuffer);
     if (!buffer)
         return nullptr;

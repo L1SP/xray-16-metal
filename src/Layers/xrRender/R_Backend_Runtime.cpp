@@ -89,8 +89,20 @@ void CBackend::Invalidate()
     fill_mode = u32(-1);
     z_enable = u32(-1);
     z_func = u32(-1);
+#if defined(USE_METAL)
+    z_write = u32(-1);
+#endif
     alpha_ref = u32(-1);
     colorwrite_mask = u32(-1);
+#if defined(USE_METAL)
+    blendEnabled = false;
+    srcBlend = u32(-1);
+    destBlend = u32(-1);
+    blendOp = u32(-1);
+    srcBlendAlpha = u32(-1);
+    destBlendAlpha = u32(-1);
+    blendOpAlpha = u32(-1);
+#endif
 
     // Since constant buffers are unmapped (for DirecX 10)
     // transform setting handlers should be unmapped too.

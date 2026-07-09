@@ -27,6 +27,7 @@ public:
     // Encoder management for u_setrt / ClearRT / ClearZB
     void EndEncoding();
     void CreateEncoder(MTL::RenderPassDescriptor* rpd);
+    void NullifyMetalTextures();
     MTL::RenderPassDescriptor* CreateRPD(MTL::Texture* color0, MTL::Texture* color1,
         MTL::Texture* color2, MTL::Texture* depth);
 

@@ -113,6 +113,7 @@ static MslUniformMap parse_msl_uniforms(pcstr mslSource)
         // Map type string to class
         u32 cls = RC_1x1;
         if (typeStr == "float4x4") cls = RC_4x4;
+        else if (typeStr == "float4x3") cls = RC_3x4; // this line cost me 2 days of my life
         else if (typeStr == "float3x4") cls = RC_3x4;
         else if (typeStr == "float2x4") cls = RC_2x4;
         else if (typeStr == "float4" || typeStr == "half4") cls = RC_1x4;
@@ -124,11 +125,18 @@ static MslUniformMap parse_msl_uniforms(pcstr mslSource)
         else if (typeStr.find("spvUnsafeArray<int") != xr_string::npos) cls = RC_int;
 
         // SPIRV-Cross renames GLSL array uniforms (like `float4x4 sbones_array[128]`)
-        // to `spvUnsafeArray<float4, N>& array [[buffer(N)]]` in MSL.
-        // Map the generic MSL name `array` back to the original GLSL name.
+        // to `spvUnsafeArray<float4, N>& array [[buffer(N)]]` in MSL (older versions)
+        // or preserves the name as `sbones_array` (newer versions).
+        // Map to RC_3x4 — the engine treats sbones_array as an array of 3×4 matrices
+        // (3 consecutive float4s per bone, 48-byte stride). SPIRV-Cross emits
+        // spvUnsafeArray<float4> which parse_msl_uniforms types as RC_4x4, but seta()
+        // needs RC_3x4 to select the correct 48-byte stride and row-major float4 packing.
         xr_string mappedName = name;
-        if (name == "array" && typeStr.find("spvUnsafeArray") != xr_string::npos)
+        if ((name == "array" || name == "sbones_array") && typeStr.find("spvUnsafeArray") != xr_string::npos)
+        {
             mappedName = "sbones_array";
+            cls = RC_3x4;
+        }
 
         result[mappedName] = { bufferIdx, cls };
         pos = nend;
@@ -246,7 +254,7 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
         C->destination = RC_dest_vertex;
         C->type = RC_float;
         R_constant_load& L = C->vs;
-        L.cls = RC_4x4;
+        L.cls = RC_3x4;
         L.location = 30;
         L.index = 0;
         // Re-sort to maintain binary search order

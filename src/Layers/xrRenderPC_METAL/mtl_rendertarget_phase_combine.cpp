@@ -97,10 +97,15 @@ void CRenderTarget::phase_combine()
         float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
 
         FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
-        pv->set(-1, 1, 0, 1, 0, 0, scale_Y); pv++;
-        pv->set(-1, -1, 0, 0, 0, 0, 0); pv++;
-        pv->set(1, 1, 1, 1, 0, scale_X, scale_Y); pv++;
-        pv->set(1, -1, 1, 0, 0, scale_X, 0); pv++;
+        // Metal: negate Y because combine_1.vs negates Y (for GL) and then FLIP_VERTEX_Y
+        // negates Y again (for Metal). The double negation produces y = I.P.y, meaning
+        // the TL vertex (input y=1) goes to Metal's bottom of screen (Y=1 = bottom).
+        // Negating the input Y values cancels the double-negation: TL input y=-1 →
+        // shader negates to 1 → FLIP_VERTEX_Y negates to -1 → Metal's top of screen.
+        pv->set(-1, -1, 0, 1, 0, 0, scale_Y); pv++; // TL: y=-1
+        pv->set(-1, 1, 0, 0, 0, 0, 0); pv++;         // BL: y=1
+        pv->set(1, -1, 1, 1, 0, scale_X, scale_Y); pv++; // TR: y=-1
+        pv->set(1, 1, 1, 0, 0, scale_X, 0); pv++;    // BR: y=1
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 
         // Draw
@@ -324,13 +329,14 @@ void CRenderTarget::phase_combine_volumetric()
         float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
 
         FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
-        pv->set(-1, 1, 0, 1, 0, 0, scale_Y);
+        // Same Y-negation as combine_1 — see comment in phase_combine
+        pv->set(-1, -1, 0, 1, 0, 0, scale_Y);
         pv++;
-        pv->set(-1, -1, 0, 0, 0, 0, 0);
+        pv->set(-1, 1, 0, 0, 0, 0, 0);
         pv++;
-        pv->set(1, 1, 1, 1, 0, scale_X, scale_Y);
+        pv->set(1, -1, 1, 1, 0, scale_X, scale_Y);
         pv++;
-        pv->set(1, -1, 1, 0, 0, scale_X, 0);
+        pv->set(1, 1, 1, 0, 0, scale_X, 0);
         pv++;
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 

@@ -85,4 +85,8 @@ extern u32 s_nextShaderID;
 MTL::Texture* lookup_mtl_texture(u32 handle);
 u32 register_mtl_texture(MTL::Texture* tex);
 void unregister_mtl_texture(u32 handle);
+
+// Dynamic stream buffer redirect: resolves stale SGeometry::vb handles
+// (cached at load time) to the current ring buffer slot.
+MTL::Buffer* resolve_stream_buffer(MTL::Buffer* handle);
 } // namespace xray::render::RENDER_NAMESPACE

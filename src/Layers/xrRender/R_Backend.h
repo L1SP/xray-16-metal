@@ -22,6 +22,10 @@
 #include "Layers/xrRenderDX11/StateManager/dx11StateCache.h"
 #endif
 
+#if defined(USE_METAL)
+#include "Layers/xrRenderMETAL/mtlHW.h"
+#endif
+
 #include "FVF.h"
 
 namespace xray::render::RENDER_NAMESPACE
@@ -168,6 +172,9 @@ private:
     u32 cull_mode;
     u32 z_enable;
     u32 z_func;
+#if defined(USE_METAL)
+    u32 z_write;
+#endif
     u32 alpha_ref;
 
     // Lists
@@ -272,6 +279,7 @@ public:
             textures_vs[i] = nullptr;
         for (u32 i = 0; i < CTexture::mtMaxGeometryShaderTextures; ++i)
             textures_gs[i] = nullptr;
+        HW.NullifyMetalTextures();
     }
 #endif
 
@@ -461,9 +469,19 @@ public:
                         u32 _zfail = D3DSTENCILOP_KEEP);
     IC void set_Z(u32 _enable);
     IC void set_ZFunc(u32 _func);
+#if defined(USE_METAL)
+    IC void set_ZWritable(u32 _enable);
+#endif
     IC void set_AlphaRef(u32 _value);
 #if defined(USE_METAL)
     IC void set_BlendEnable(bool _enable);
+    IC void set_SrcBlend(u32 v);
+    IC void set_DestBlend(u32 v);
+    IC void set_BlendOp(u32 v);
+    IC void set_SrcBlendAlpha(u32 v);
+    IC void set_DestBlendAlpha(u32 v);
+    IC void set_BlendOpAlpha(u32 v);
+    IC void ApplyDS();
 #endif
     IC void set_ColorWriteEnable(
         u32 _mask = D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE |
@@ -651,6 +669,12 @@ public:
 #if defined(USE_METAL)
 private:
     bool blendEnabled;
+    u32 srcBlend;
+    u32 destBlend;
+    u32 blendOp;
+    u32 srcBlendAlpha;
+    u32 destBlendAlpha;
+    u32 blendOpAlpha;
 #endif
 };
 #pragma warning(pop)
