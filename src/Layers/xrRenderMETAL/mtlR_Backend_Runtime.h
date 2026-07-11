@@ -78,6 +78,42 @@ inline MTL::PrimitiveType TranslateTopology(D3DPRIMITIVETYPE T)
     }
 }
 
+static pcstr PixelFormatName(u32 fmt)
+{
+    switch (fmt)
+    {
+    case MTL::PixelFormatInvalid: return "Invalid";
+    case MTL::PixelFormatBGRA8Unorm: return "BGRA8Unorm";
+    case MTL::PixelFormatBGRA8Unorm_sRGB: return "BGRA8Unorm_sRGB";
+    case MTL::PixelFormatRGBA8Unorm: return "RGBA8Unorm";
+    case MTL::PixelFormatRGBA8Unorm_sRGB: return "RGBA8Unorm_sRGB";
+    case MTL::PixelFormatRGBA16Float: return "RGBA16Float";
+    case MTL::PixelFormatRGBA32Float: return "RGBA32Float";
+    case MTL::PixelFormatR32Float: return "R32Float";
+    case MTL::PixelFormatDepth32Float: return "Depth32Float";
+    case MTL::PixelFormatDepth32Float_Stencil8: return "Depth32Float_Stencil8";
+    case MTL::PixelFormatBC1_RGBA: return "BC1_RGBA";
+    case MTL::PixelFormatBC3_RGBA: return "BC3_RGBA";
+    case MTL::PixelFormatBC4_RUnorm: return "BC4_RUnorm";
+    case MTL::PixelFormatBC5_RGUnorm: return "BC5_RGUnorm";
+    case MTL::PixelFormatBC7_RGBAUnorm: return "BC7_RGBAUnorm";
+    default: return "?";
+    }
+}
+
+// Convert D3D color write mask bits → Metal color write mask bits.
+// D3D: RED=1, GREEN=2, BLUE=4, ALPHA=8
+// Metal: RED=8, GREEN=4, BLUE=2, ALPHA=1
+static MTL::ColorWriteMask ConvertWriteMask(u32 d3dMask)
+{
+    MTL::ColorWriteMask mtl = MTL::ColorWriteMask(0);
+    if (d3dMask & 1) mtl |= MTL::ColorWriteMaskRed;
+    if (d3dMask & 2) mtl |= MTL::ColorWriteMaskGreen;
+    if (d3dMask & 4) mtl |= MTL::ColorWriteMaskBlue;
+    if (d3dMask & 8) mtl |= MTL::ColorWriteMaskAlpha;
+    return mtl;
+}
+
 inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 declID, u32 vbStride, SDeclaration* decl,
     bool blendEnabled, u32 srcBlend, u32 destBlend, u32 blendOp,
     u32 srcBlendAlpha, u32 destBlendAlpha, u32 blendOpAlpha,
@@ -150,29 +186,32 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
             psoDesc->setStencilAttachmentPixelFormat(sa->texture()->pixelFormat());
     }
 
-    // Configure blend state for attachment 0 from each member
-    auto* ca0 = psoDesc->colorAttachments()->object(0);
-    if (key.blendEnabled)
+    // Configure blend state and write mask for all color attachments
+    for (int i = 0; i < 3; i++)
     {
-        ca0->setBlendingEnabled(true);
-        ca0->setRgbBlendOperation(
-            static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOp)));
-        ca0->setAlphaBlendOperation(
-            static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOpAlpha)));
-        ca0->setSourceRGBBlendFactor(
-            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlend)));
-        ca0->setSourceAlphaBlendFactor(
-            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlendAlpha)));
-        ca0->setDestinationRGBBlendFactor(
-            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlend)));
-        ca0->setDestinationAlphaBlendFactor(
-            static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlendAlpha)));
+        auto* ca = psoDesc->colorAttachments()->object(i);
+        ca->setWriteMask(ConvertWriteMask(key.colorWriteMask));
+        if (key.blendEnabled && i == 0)
+        {
+            ca->setBlendingEnabled(true);
+            ca->setRgbBlendOperation(
+                static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOp)));
+            ca->setAlphaBlendOperation(
+                static_cast<MTL::BlendOperation>(mtlStateUtils::ConvertBlendOp(key.blendOpAlpha)));
+            ca->setSourceRGBBlendFactor(
+                static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlend)));
+            ca->setSourceAlphaBlendFactor(
+                static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.srcBlendAlpha)));
+            ca->setDestinationRGBBlendFactor(
+                static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlend)));
+            ca->setDestinationAlphaBlendFactor(
+                static_cast<MTL::BlendFactor>(mtlStateUtils::ConvertBlendArg(key.destBlendAlpha)));
+        }
+        else
+        {
+            ca->setBlendingEnabled(false);
+        }
     }
-    else
-    {
-        ca0->setBlendingEnabled(false);
-    }
-    ca0->setWriteMask(static_cast<MTL::ColorWriteMask>(key.colorWriteMask));
 
     MTL::VertexDescriptor* vertDesc = MTL::VertexDescriptor::alloc()->init();
     u32 maxAttr = 0;
@@ -219,6 +258,15 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
     vertDesc->release();
 
     NS::Error* error = nullptr;
+    // Capture write mask values BEFORE releasing psoDesc
+    u32 wm0 = MTL::ColorWriteMaskAll, wm1 = MTL::ColorWriteMaskAll, wm2 = MTL::ColorWriteMaskAll;
+    if (psoDesc)
+    {
+        wm0 = (u32)psoDesc->colorAttachments()->object(0)->writeMask();
+        wm1 = (u32)psoDesc->colorAttachments()->object(1)->writeMask();
+        wm2 = (u32)psoDesc->colorAttachments()->object(2)->writeMask();
+    }
+
     auto* pso = device->newRenderPipelineState(psoDesc, &error);
     if (!pso)
     {
@@ -361,7 +409,7 @@ IC void CBackend::ClearZB(u32 zb, float depth)
         if (enc)
         {
             enc->endEncoding();
-            enc->release();
+            // NOTE: enc is autoreleased — NO release() call
         }
     }
     clearRPD->release();
@@ -547,9 +595,35 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     auto* mtlVB = resolve_stream_buffer(static_cast<MTL::Buffer*>(vb));
     if (!enc || !mtlVB || !mtlIB)
     {
-        Msg("! Render indexed skipped: enc=%p vb=%p ib=%p blend=%u T=%d baseV=%u countV=%u PC=%u",
-            (void*)enc, (void*)mtlVB, (void*)mtlIB, blendEnabled, T, baseV, countV, PC);
-        return;
+        // Safety net: recreate encoder from current RT bindings if it was
+        // prematurely ended (e.g. by a sub-pass calling EndEncoding).
+        if (!enc && HW.m_currentCmdBuffer && (pRT[0] || pRT[1] || pRT[2] || pZB))
+        {
+            MTL::Texture* mtlColor[3] = {};
+            if (pRT[0]) mtlColor[0] = lookup_mtl_texture(pRT[0]);
+            if (pRT[1]) mtlColor[1] = lookup_mtl_texture(pRT[1]);
+            if (pRT[2]) mtlColor[2] = lookup_mtl_texture(pRT[2]);
+            MTL::Texture* mtlDepth = pZB ? lookup_mtl_texture(pZB) : nullptr;
+
+            MTL::RenderPassDescriptor* rpd = HW.CreateRPD(mtlColor[0], mtlColor[1], mtlColor[2], mtlDepth);
+            if (rpd)
+            {
+                HW.CreateEncoder(rpd);
+                rpd->release();
+                enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
+                Msg("[Metal Safety] Recreated encoder from pRT[%u %u %u] ZB=%u",
+                    pRT[0], pRT[1], pRT[2], pZB);
+            }
+        }
+        if (!enc || !mtlVB || !mtlIB)
+        {
+            #ifdef DEBUG
+                Msg("! Render indexed skipped: enc=%p vb=%p ib=%p blend=%u ps=%u T=%d baseV=%u countV=%u PC=%u",
+                (void*)enc, (void*)mtlVB, (void*)mtlIB, blendEnabled, ps, T, baseV, countV, PC);
+            #endif
+
+            return;
+        }
     }
 
     auto* pso = get_or_create_pipeline(
@@ -596,8 +670,33 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
     auto* mtlVB = resolve_stream_buffer(static_cast<MTL::Buffer*>(vb));
     if (!enc || !mtlVB)
     {
-        Msg("! CBackend::Render non-indexed: no encoder or vb (enc=%p vb=%p)", (void*)enc, (void*)mtlVB);
-        return;
+        // Safety net: recreate encoder from current RT bindings.
+        if (!enc && HW.m_currentCmdBuffer && (pRT[0] || pRT[1] || pRT[2] || pZB))
+        {
+            MTL::Texture* mtlColor[3] = {};
+            if (pRT[0]) mtlColor[0] = lookup_mtl_texture(pRT[0]);
+            if (pRT[1]) mtlColor[1] = lookup_mtl_texture(pRT[1]);
+            if (pRT[2]) mtlColor[2] = lookup_mtl_texture(pRT[2]);
+            MTL::Texture* mtlDepth = pZB ? lookup_mtl_texture(pZB) : nullptr;
+
+            MTL::RenderPassDescriptor* rpd = HW.CreateRPD(mtlColor[0], mtlColor[1], mtlColor[2], mtlDepth);
+            if (rpd)
+            {
+                HW.CreateEncoder(rpd);
+                rpd->release();
+                enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder);
+                Msg("[Metal Safety] Recreated encoder (non-indexed) from pRT[%u %u %u] ZB=%u",
+                    pRT[0], pRT[1], pRT[2], pZB);
+            }
+        }
+        if (!enc || !mtlVB)
+        {
+            #ifdef DEBUG
+                Msg("! CBackend::Render non-indexed: no encoder or vb (enc=%p vb=%p)", (void*)enc, (void*)mtlVB);
+            #endif
+            
+            return;
+        }
     }
 
     u32 vsID = vs;

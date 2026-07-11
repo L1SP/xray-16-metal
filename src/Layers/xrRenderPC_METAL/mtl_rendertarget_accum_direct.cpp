@@ -4,33 +4,964 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+namespace accum_direct
+{
+static Fvector3 corners[8] =
+{
+    { -1, -1, 0.7f }, { -1, -1, +1   },
+    { -1, +1, +1   }, { -1, +1, 0.7f },
+    { +1, +1, +1   }, { +1, +1, 0.7f },
+    { +1, -1, +1   }, { +1, -1, 0.7f }
+};
+
+static u16 facetable[16][3] =
+{
+    { 3, 2, 1 },
+    { 3, 1, 0 },
+    { 7, 6, 5 },
+    { 5, 6, 4 },
+    { 3, 5, 2 },
+    { 4, 2, 5 },
+    { 1, 6, 7 },
+    { 7, 0, 1 },
+
+    { 5, 3, 0 },
+    { 7, 5, 0 },
+
+    { 1, 4, 6 },
+    { 2, 4, 1 },
+};
+} // namespace accum_direct
+
 void CRenderTarget::accum_direct(CBackend& cmd_list, u32 sub_phase)
 {
-    // TODO: Implement Metal accum direct phase
+    phase_accumulator(cmd_list);
+    if (RImplementation.o.sunfilter)
+    {
+        accum_direct_f(cmd_list, sub_phase);
+        return;
+    }
+
+    u32 uiElementIndex = sub_phase;
+    if ((uiElementIndex == SE_SUN_NEAR) && use_minmax_sm_this_frame())
+        uiElementIndex = SE_SUN_NEAR_MINMAX;
+
+    light* fuckingsun = (light*)RImplementation.Lights.sun._get();
+
+    u32 Offset;
+    u32 C = color_rgba(255, 255, 255, 255);
+    float _w = float(Device.dwWidth);
+    float _h = float(Device.dwHeight);
+    Fvector2 p0, p1;
+    p0.set(.5f / _w, .5f / _h);
+    p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+    float d_Z = EPS_S, d_W = 1.f;
+
+    Fvector L_dir, L_clr;
+    float L_spec;
+    L_clr.set(fuckingsun->color.r, fuckingsun->color.g, fuckingsun->color.b);
+    L_spec = u_diffuse2s(L_clr);
+    Device.mView.transform_dir(L_dir, fuckingsun->direction);
+    L_dir.normalize();
+
+    cmd_list.set_CullMode(CULL_NONE);
+    PIX_EVENT(SE_SUN_NEAR_sub_phase);
+    if (SE_SUN_NEAR == sub_phase)
+    {
+        FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
+        pv->set(EPS, EPS, d_Z, d_W, C, p0.x, p0.y);
+        pv++;
+        pv->set(EPS, float(_h + EPS), d_Z, d_W, C, p0.x, p1.y);
+        pv++;
+        pv->set(float(_w + EPS), EPS, d_Z, d_W, C, p1.x, p0.y);
+        pv++;
+        pv->set(float(_w + EPS), float(_h + EPS), d_Z, d_W, C, p1.x, p1.y);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
+        cmd_list.set_Geometry(g_combine);
+
+        float intensity = 0.3f * fuckingsun->color.r + 0.48f * fuckingsun->color.g + 0.22f * fuckingsun->color.b;
+        Fvector dir = L_dir;
+        dir.normalize().mul(-_sqrt(intensity + EPS));
+        cmd_list.set_Element(s_accum_mask->E[SE_MASK_DIRECT]);
+        cmd_list.set_c("Ldynamic_dir", dir.x, dir.y, dir.z, 0.f);
+
+        if (!RImplementation.o.msaa)
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0x81, 0x7f,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                cmd_list.set_Element(s_accum_mask_msaa[0]->E[SE_MASK_DIRECT]);
+                cmd_list.set_CullMode(CULL_NONE);
+                cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0x81, 0x7f,
+                    D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+        }
+    }
+
+    Fvector center_pt;
+    center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, ps_r2_sun_near);
+    Device.mFullTransform.transform(center_pt);
+    d_Z = center_pt.z;
+
+    if (RImplementation.o.nvstencil && (SE_SUN_NEAR == sub_phase))
+        u_stencil_optimize(cmd_list);
+
+    PIX_EVENT(Perform_lighting);
+
+    {
+        phase_accumulator(cmd_list);
+        cmd_list.set_CullMode(CULL_NONE);
+        cmd_list.set_ColorWriteEnable();
+
+        float fRange = (SE_SUN_NEAR == sub_phase) ? ps_r2_sun_depth_near_scale : ps_r2_sun_depth_far_scale;
+        float fBias = (SE_SUN_NEAR == sub_phase) ? (-ps_r2_sun_depth_near_bias) : ps_r2_sun_depth_far_bias;
+        Fmatrix m_TexelAdjust =
+        {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.5f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.5f * fRange, 0.0f,
+            0.5f, 0.5f, 0.5f + fBias, 1.0f
+        };
+
+        Fmatrix m_shadow;
+        {
+            Fmatrix xf_project;
+            xf_project.mul(m_TexelAdjust, RImplementation.r_sun_old.sun->X.D[0].combine);
+            m_shadow.mul(xf_project, Device.mInvView);
+
+            if ((SE_SUN_FAR == sub_phase) && (RImplementation.o.HW_smap))
+            {
+                Fvector bias;
+                bias.mul(L_dir, ps_r2_sun_tsm_bias);
+                Fmatrix bias_t;
+                bias_t.translate(bias);
+                m_shadow.mulB_44(bias_t);
+            }
+        }
+
+        Fmatrix m_clouds_shadow;
+        {
+            static float w_shift = 0;
+            Fmatrix m_xform;
+            Fvector direction = fuckingsun->direction;
+            float w_dir = g_pGamePersistent->Environment().CurrentEnv.wind_direction;
+            Fvector normal;
+            normal.setHP(w_dir, 0);
+            w_shift += 0.003f * Device.fTimeDelta;
+            Fvector position;
+            position.set(0, 0, 0);
+            m_xform.build_camera_dir(position, direction, normal);
+            Fvector localnormal;
+            m_xform.transform_dir(localnormal, normal);
+            localnormal.normalize();
+            m_clouds_shadow.mul(m_xform, Device.mInvView);
+            m_xform.scale(0.002f, 0.002f, 1.f);
+            m_clouds_shadow.mulA_44(m_xform);
+            m_xform.translate(localnormal.mul(w_shift));
+            m_clouds_shadow.mulA_44(m_xform);
+        }
+
+        Fvector2 j0, j1;
+        float scale_X = float(Device.dwWidth) / float(TEX_jitter);
+        float offset = (.5f / float(TEX_jitter));
+        j0.set(offset, offset);
+        j1.set(scale_X, scale_X).add(offset);
+
+        FVF::TL2uv* pv = (FVF::TL2uv*)RImplementation.Vertex.Lock(4, g_combine_2UV->vb_stride, Offset);
+        pv->set(-1, -1, d_Z, d_W, C, 0, 0, 0, 0);
+        pv++;
+        pv->set(-1, 1, d_Z, d_W, C, 0, 1, 0, scale_X);
+        pv++;
+        pv->set(1, -1, d_Z, d_W, C, 1, 0, scale_X, 0);
+        pv++;
+        pv->set(1, 1, d_Z, d_W, C, 1, 1, scale_X, scale_X);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine_2UV->vb_stride);
+        cmd_list.set_Geometry(g_combine_2UV);
+
+        cmd_list.set_Element(s_accum_direct->E[uiElementIndex]);
+        cmd_list.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+        cmd_list.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
+        cmd_list.set_c("m_shadow", m_shadow);
+        cmd_list.set_c("m_sunmask", m_clouds_shadow);
+
+        float zMin, zMax;
+        if (SE_SUN_NEAR == sub_phase)
+        {
+            zMin = 0;
+            zMax = ps_r2_sun_near;
+        }
+        else
+        {
+            zMin = ps_r2_sun_near;
+            zMax = ps_r2_sun_far;
+        }
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMin);
+        Device.mFullTransform.transform(center_pt);
+        zMin = center_pt.z;
+
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMax);
+        Device.mFullTransform.transform(center_pt);
+        zMax = center_pt.z;
+
+        if (!RImplementation.o.msaa)
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                cmd_list.set_Element(s_accum_direct_msaa[0]->E[uiElementIndex]);
+                cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0xff, 0x00);
+                cmd_list.set_CullMode(CULL_NONE);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+        }
+
+        if (RImplementation.o.advancedpp && (ps_r_sun_shafts > 0))
+            accum_direct_volumetric(sub_phase, Offset, m_shadow);
+    }
 }
 
 void CRenderTarget::accum_direct_cascade(CBackend& cmd_list, u32 sub_phase, Fmatrix& xform, Fmatrix& xform_prev, float fBias)
 {
-    // TODO: Implement Metal accum direct cascade
+    phase_accumulator(cmd_list);
+    if (RImplementation.o.sunfilter)
+    {
+        accum_direct_f(cmd_list, sub_phase);
+        return;
+    }
+
+    u32 uiElementIndex = sub_phase;
+    if ((uiElementIndex == SE_SUN_NEAR) && use_minmax_sm_this_frame())
+        uiElementIndex = SE_SUN_NEAR_MINMAX;
+
+    light* fuckingsun = (light*)RImplementation.Lights.sun._get();
+
+    u32 Offset;
+    u32 C = color_rgba(255, 255, 255, 255);
+    float _w = float(Device.dwWidth);
+    float _h = float(Device.dwHeight);
+    Fvector2 p0, p1;
+    p0.set(.5f / _w, .5f / _h);
+    p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+    float d_Z = EPS_S, d_W = 1.f;
+
+    Fvector L_dir, L_clr;
+    float L_spec;
+    L_clr.set(fuckingsun->color.r, fuckingsun->color.g, fuckingsun->color.b);
+    L_spec = u_diffuse2s(L_clr);
+    Device.mView.transform_dir(L_dir, fuckingsun->direction);
+    L_dir.normalize();
+
+    cmd_list.set_CullMode(CULL_NONE);
+    PIX_EVENT_CTX(cmd_list, SE_SUN_NEAR_sub_phase);
+    if (SE_SUN_NEAR == sub_phase)
+    {
+        FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
+        pv->set(EPS, float(_h + EPS), d_Z, d_W, C, p0.x, p0.y);
+        pv++;
+        pv->set(EPS, EPS, d_Z, d_W, C, p0.x, p1.y);
+        pv++;
+        pv->set(float(_w + EPS), float(_h + EPS), d_Z, d_W, C, p1.x, p0.y);
+        pv++;
+        pv->set(float(_w + EPS), EPS, d_Z, d_W, C, p1.x, p1.y);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
+        cmd_list.set_Geometry(g_combine);
+
+        float intensity = 0.3f * fuckingsun->color.r + 0.48f * fuckingsun->color.g + 0.22f * fuckingsun->color.b;
+        Fvector dir = L_dir;
+        dir.normalize().mul(-_sqrt(intensity + EPS));
+        cmd_list.set_Element(s_accum_mask->E[SE_MASK_DIRECT]);
+        cmd_list.set_c("Ldynamic_dir", dir.x, dir.y, dir.z, 0.f);
+
+        if (!RImplementation.o.msaa)
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0x81, 0x7f,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                cmd_list.set_Element(s_accum_mask_msaa[0]->E[SE_MASK_DIRECT]);
+                cmd_list.set_CullMode(CULL_NONE);
+                cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0x81, 0x7f,
+                    D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+        }
+    }
+
+    Fvector center_pt;
+    center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, ps_r2_sun_near);
+    Device.mFullTransform.transform(center_pt);
+    d_Z = center_pt.z;
+
+    if (RImplementation.o.nvstencil && (SE_SUN_NEAR == sub_phase))
+        u_stencil_optimize(cmd_list);
+
+    PIX_EVENT_CTX(cmd_list, Perform_lighting);
+
+    {
+        phase_accumulator(cmd_list);
+        cmd_list.set_CullMode(CULL_CCW);
+        cmd_list.set_ColorWriteEnable();
+
+        float fRange = (SE_SUN_NEAR == sub_phase) ? ps_r2_sun_depth_near_scale : ps_r2_sun_depth_far_scale;
+        Fmatrix m_TexelAdjust =
+        {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.5f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.5f * fRange, 0.0f,
+            0.5f, 0.5f, 0.5f + fBias, 1.0f
+        };
+
+        Fmatrix m_shadow;
+        {
+            Fmatrix xf_project;
+            xf_project.mul(m_TexelAdjust, fuckingsun->X.D[sub_phase].combine);
+            m_shadow.mul(xf_project, Device.mInvView);
+
+            if ((SE_SUN_FAR == sub_phase) && (RImplementation.o.HW_smap))
+            {
+                Fvector bias;
+                bias.mul(L_dir, ps_r2_sun_tsm_bias);
+                Fmatrix bias_t;
+                bias_t.translate(bias);
+                m_shadow.mulB_44(bias_t);
+            }
+        }
+
+        Fmatrix m_clouds_shadow;
+        {
+            static float w_shift = 0;
+            Fmatrix m_xform;
+            Fvector direction = fuckingsun->direction;
+            float w_dir = g_pGamePersistent->Environment().CurrentEnv.wind_direction;
+            Fvector normal;
+            normal.setHP(w_dir, 0);
+            w_shift += 0.003f * Device.fTimeDelta;
+            Fvector position;
+            position.set(0, 0, 0);
+            m_xform.build_camera_dir(position, direction, normal);
+            Fvector localnormal;
+            m_xform.transform_dir(localnormal, normal);
+            localnormal.normalize();
+            m_clouds_shadow.mul(m_xform, Device.mInvView);
+            m_xform.scale(0.002f, 0.002f, 1.f);
+            m_clouds_shadow.mulA_44(m_xform);
+            m_xform.translate(localnormal.mul(w_shift));
+            m_clouds_shadow.mulA_44(m_xform);
+        }
+
+        Fmatrix m_Texgen;
+        m_Texgen.identity();
+        cmd_list.xforms.set_W(m_Texgen);
+        cmd_list.xforms.set_V(Device.mView);
+        cmd_list.xforms.set_P(Device.mProject);
+        u_compute_texgen_screen(cmd_list, m_Texgen);
+
+        Fvector2 j0, j1;
+        float scale_X = float(Device.dwWidth) / float(TEX_jitter);
+        float offset = (.5f / float(TEX_jitter));
+        j0.set(offset, offset);
+        j1.set(scale_X, scale_X).add(offset);
+
+        u32 i_offset = 0;
+        {
+            u16* pib = RImplementation.Index.Lock(sizeof(accum_direct::facetable) / sizeof(u16), i_offset);
+            CopyMemory(pib, &accum_direct::facetable, sizeof(accum_direct::facetable));
+            RImplementation.Index.Unlock(sizeof(accum_direct::facetable) / sizeof(u16));
+
+            constexpr u32 ver_count = sizeof(accum_direct::corners) / sizeof(Fvector3);
+            Fvector4* pv = (Fvector4*)RImplementation.Vertex.Lock(ver_count, g_combine_cuboid.stride(), Offset);
+
+            Fmatrix inv_XDcombine;
+            if (sub_phase == SE_SUN_FAR)
+                inv_XDcombine.invert(xform_prev);
+            else
+                inv_XDcombine.invert(xform);
+
+            for (u32 i = 0; i < ver_count; ++i)
+            {
+                Fvector3 tmp_vec;
+                inv_XDcombine.transform(tmp_vec, accum_direct::corners[i]);
+                pv->set(tmp_vec.x, tmp_vec.y, tmp_vec.z, 1);
+                pv++;
+            }
+            RImplementation.Vertex.Unlock(ver_count, g_combine_cuboid.stride());
+        }
+
+        cmd_list.set_Geometry(g_combine_cuboid);
+
+        cmd_list.set_Element(s_accum_direct->E[uiElementIndex]);
+        cmd_list.set_c("m_texgen", m_Texgen);
+        cmd_list.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+        cmd_list.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
+        cmd_list.set_c("m_shadow", m_shadow);
+        cmd_list.set_c("m_sunmask", m_clouds_shadow);
+
+        if (sub_phase == SE_SUN_FAR)
+        {
+            Fvector3 view_viewspace;
+            view_viewspace.set(0, 0, 1);
+
+            m_shadow.transform_dir(view_viewspace);
+            Fvector4 view_projlightspace;
+            view_projlightspace.set(view_viewspace.x, view_viewspace.y, 0, 0);
+            view_projlightspace.normalize();
+
+            cmd_list.set_c("view_shadow_proj", view_projlightspace);
+        }
+
+        float zMin, zMax;
+        if (SE_SUN_NEAR == sub_phase)
+        {
+            zMin = 0;
+            zMax = ps_r2_sun_near;
+        }
+        else
+        {
+            zMin = ps_r2_sun_near;
+            zMax = ps_r2_sun_far;
+        }
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMin);
+        Device.mFullTransform.transform(center_pt);
+        zMin = center_pt.z;
+
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMax);
+        Device.mFullTransform.transform(center_pt);
+        zMax = center_pt.z;
+
+        if ((SE_SUN_NEAR == sub_phase || SE_SUN_MIDDLE == sub_phase))
+            cmd_list.set_ZFunc(D3DCMP_GREATEREQUAL);
+        else if (!ps_r2_ls_flags_ext.is(R2FLAGEXT_SUN_ZCULLING))
+            cmd_list.set_ZFunc(D3DCMP_ALWAYS);
+        else
+            cmd_list.set_ZFunc(D3DCMP_LESS);
+
+        u32 st_mask = 0xFE;
+        _D3DSTENCILOP st_pass = D3DSTENCILOP_ZERO;
+
+        if (sub_phase == SE_SUN_FAR)
+        {
+            st_mask = 0x00;
+            st_pass = D3DSTENCILOP_KEEP;
+        }
+
+        if (!RImplementation.o.msaa)
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, st_mask,
+                D3DSTENCILOP_KEEP, st_pass, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, i_offset, 16);
+        }
+        else
+        {
+            cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, st_mask,
+                D3DSTENCILOP_KEEP, st_pass, D3DSTENCILOP_KEEP);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, i_offset, 16);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                cmd_list.set_Element(s_accum_direct_msaa[0]->E[uiElementIndex]);
+
+                if ((SE_SUN_NEAR == sub_phase || SE_SUN_MIDDLE == sub_phase))
+                    cmd_list.set_ZFunc(D3DCMP_GREATEREQUAL);
+                else if (!ps_r2_ls_flags_ext.is(R2FLAGEXT_SUN_ZCULLING))
+                    cmd_list.set_ZFunc(D3DCMP_ALWAYS);
+                else
+                    cmd_list.set_ZFunc(D3DCMP_LESS);
+
+                cmd_list.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0xff, st_mask,
+                    D3DSTENCILOP_KEEP, st_pass, D3DSTENCILOP_KEEP);
+                cmd_list.set_CullMode(CULL_NONE);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, i_offset, 16);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+        }
+
+        if (RImplementation.o.advancedpp && (ps_r_sun_shafts > 0) && sub_phase == SE_SUN_FAR)
+            accum_direct_volumetric(sub_phase, Offset, m_shadow);
+    }
 }
 
 void CRenderTarget::accum_direct_blend(CBackend& cmd_list)
 {
-    // TODO: Implement Metal accum direct blend
+    PIX_EVENT(accum_direct_blend);
+    if (!RImplementation.o.fp16_blend)
+    {
+        u_setrt(RCache, rt_Accumulator, nullptr, nullptr, rt_MSAADepth);
+
+        u32 Offset;
+        u32 C = color_rgba(255, 255, 255, 255);
+        float _w = float(Device.dwWidth);
+        float _h = float(Device.dwHeight);
+        Fvector2 p0, p1;
+        p0.set(.5f / _w, .5f / _h);
+        p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+        float d_Z = EPS_S, d_W = 1.f;
+
+        FVF::TL2uv* pv = (FVF::TL2uv*)RImplementation.Vertex.Lock(4, g_combine_2UV->vb_stride, Offset);
+        pv->set(-1, -1, d_Z, d_W, C, 0, 0, 0, 0);
+        pv++;
+        pv->set(-1, 1, d_Z, d_W, C, 0, 1, 0, 1);
+        pv++;
+        pv->set(1, -1, d_Z, d_W, C, 1, 0, 1, 0);
+        pv++;
+        pv->set(1, 1, d_Z, d_W, C, 1, 1, 1, 1);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine_2UV->vb_stride);
+        RCache.set_Geometry(g_combine_2UV);
+        RCache.set_Element(s_accum_mask->E[SE_MASK_ACCUM_2D]);
+        if (!RImplementation.o.msaa)
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                RCache.set_Element(s_accum_mask_msaa[0]->E[SE_MASK_ACCUM_2D]);
+                RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0xff, 0x00);
+                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+        }
+    }
+    increment_light_marker(RCache);
 }
 
 void CRenderTarget::accum_direct_f(CBackend& cmd_list, u32 sub_phase)
 {
-    // TODO: Implement Metal accum direct filter
+    PIX_EVENT(accum_direct_f);
+    if (SE_SUN_LUMINANCE == sub_phase)
+    {
+        accum_direct_lum(RCache);
+        return;
+    }
+    phase_accumulator(RCache);
+    u_setrt(RCache, rt_Generic_0_r, nullptr, nullptr, rt_MSAADepth);
+
+    light* fuckingsun = (light*)RImplementation.Lights.sun._get();
+
+    u32 Offset;
+    u32 C = color_rgba(255, 255, 255, 255);
+    float _w = float(Device.dwWidth);
+    float _h = float(Device.dwHeight);
+    Fvector2 p0, p1;
+    p0.set(.5f / _w, .5f / _h);
+    p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+    float d_Z = EPS_S, d_W = 1.f;
+
+    Fvector L_dir, L_clr;
+    float L_spec;
+    L_clr.set(fuckingsun->color.r, fuckingsun->color.g, fuckingsun->color.b);
+    L_spec = u_diffuse2s(L_clr);
+    Device.mView.transform_dir(L_dir, fuckingsun->direction);
+    L_dir.normalize();
+
+    RCache.set_CullMode(CULL_NONE);
+    if (SE_SUN_NEAR == sub_phase)
+    {
+        RCache.ClearRT(rt_Generic_0, {});
+
+        FVF::TL* pv = (FVF::TL*)RImplementation.Vertex.Lock(4, g_combine->vb_stride, Offset);
+        pv->set(EPS, float(_h + EPS), d_Z, d_W, C, p0.x, p0.y);
+        pv++;
+        pv->set(EPS, EPS, d_Z, d_W, C, p0.x, p1.y);
+        pv++;
+        pv->set(float(_w + EPS), float(_h + EPS), d_Z, d_W, C, p1.x, p0.y);
+        pv++;
+        pv->set(float(_w + EPS), EPS, d_Z, d_W, C, p1.x, p1.y);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
+        RCache.set_Geometry(g_combine);
+
+        float intensity = 0.3f * fuckingsun->color.r + 0.48f * fuckingsun->color.g + 0.22f * fuckingsun->color.b;
+        Fvector dir = L_dir;
+        dir.normalize().mul(-_sqrt(intensity + EPS));
+        RCache.set_Element(s_accum_mask->E[SE_MASK_DIRECT]);
+        RCache.set_c("Ldynamic_dir", dir.x, dir.y, dir.z, 0.f);
+
+        if (!RImplementation.o.msaa)
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0x81, 0x7f,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                RCache.set_Element(s_accum_mask_msaa[0]->E[SE_MASK_DIRECT]);
+                RCache.set_Stencil(TRUE, D3DCMP_LESS, dwLightMarkerID, 0x81, 0x7f,
+                    D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+                RCache.set_CullMode(CULL_NONE);
+                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0x01, 0xff,
+                D3DSTENCILOP_KEEP, D3DSTENCILOP_REPLACE, D3DSTENCILOP_KEEP);
+        }
+    }
+
+    Fvector center_pt;
+    center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, ps_r2_sun_near);
+    Device.mFullTransform.transform(center_pt);
+    d_Z = center_pt.z;
+
+    if (RImplementation.o.nvstencil && (SE_SUN_NEAR == sub_phase))
+        u_stencil_optimize(RCache);
+
+    {
+        u_setrt(RCache, rt_Generic_0_r, nullptr, nullptr, rt_MSAADepth);
+        RCache.set_CullMode(CULL_NONE);
+        RCache.set_ColorWriteEnable();
+
+        float fTexelOffs = (.5f / float(RImplementation.o.smapsize));
+        float fRange = (SE_SUN_NEAR == sub_phase) ? ps_r2_sun_depth_near_scale : ps_r2_sun_depth_far_scale;
+        float fBias = (SE_SUN_NEAR == sub_phase) ? ps_r2_sun_depth_near_bias : -ps_r2_sun_depth_far_bias;
+        Fmatrix m_TexelAdjust =
+        {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.5f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.5f * fRange, 0.0f,
+            0.5f + fTexelOffs, 0.5f + fTexelOffs, 0.5f + fBias, 1.0f
+        };
+
+        Fmatrix m_shadow;
+        {
+            Fmatrix xf_project;
+            xf_project.mul(m_TexelAdjust, fuckingsun->X.D[0].combine);
+            m_shadow.mul(xf_project, Device.mInvView);
+
+            if (SE_SUN_FAR == sub_phase)
+            {
+                Fvector bias;
+                bias.mul(L_dir, ps_r2_sun_tsm_bias);
+                Fmatrix bias_t;
+                bias_t.translate(bias);
+                m_shadow.mulB_44(bias_t);
+            }
+        }
+
+        Fvector2 j0, j1;
+        float scale_X = float(Device.dwWidth) / float(TEX_jitter);
+        float offset = (.5f / float(TEX_jitter));
+        j0.set(offset, offset);
+        j1.set(scale_X, scale_X).add(offset);
+
+        FVF::TL2uv* pv = (FVF::TL2uv*)RImplementation.Vertex.Lock(4, g_combine_2UV->vb_stride, Offset);
+        pv->set(-1, -1, d_Z, d_W, C, 0, 0, 0, 0);
+        pv++;
+        pv->set(-1, 1, d_Z, d_W, C, 0, 1, 0, scale_X);
+        pv++;
+        pv->set(1, -1, d_Z, d_W, C, 1, 0, scale_X, 0);
+        pv++;
+        pv->set(1, 1, d_Z, d_W, C, 1, 1, scale_X, scale_X);
+        pv++;
+        RImplementation.Vertex.Unlock(4, g_combine_2UV->vb_stride);
+        RCache.set_Geometry(g_combine_2UV);
+
+        RCache.set_Element(s_accum_direct->E[sub_phase]);
+        RCache.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+        RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
+        RCache.set_c("m_shadow", m_shadow);
+
+        if (!RImplementation.o.msaa)
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+            if (RImplementation.o.msaa_opt)
+            {
+                RCache.set_Element(s_accum_direct_msaa[0]->E[sub_phase]);
+                RCache.set_CullMode(CULL_NONE);
+                RCache.set_Stencil(TRUE, D3DCMP_LESS, dwLightMarkerID | 0x80, 0xff, 0x00);
+                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            }
+            else
+            {
+                VERIFY(!"Only optimized MSAA is supported in OpenGL");
+            }
+            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+        }
+    }
 }
 
 void CRenderTarget::accum_direct_lum(CBackend& cmd_list)
 {
-    // TODO: Implement Metal accum direct luminance
+    PIX_EVENT(accum_direct_lum);
+    phase_accumulator(RCache);
+
+    light* fuckingsun = (light*)RImplementation.Lights.sun._get();
+
+    u32 Offset;
+    float _w = float(Device.dwWidth);
+    float _h = float(Device.dwHeight);
+    Fvector2 p0, p1;
+    p0.set(.5f / _w, .5f / _h);
+    p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+
+    Fvector L_dir, L_clr;
+    float L_spec;
+    L_clr.set(fuckingsun->color.r, fuckingsun->color.g, fuckingsun->color.b);
+    L_spec = u_diffuse2s(L_clr);
+    Device.mView.transform_dir(L_dir, fuckingsun->direction);
+    L_dir.normalize();
+
+    RCache.set_CullMode(CULL_NONE);
+    RCache.set_ColorWriteEnable();
+
+    Fvector2 j0, j1;
+    float scale_X = float(Device.dwWidth) / float(TEX_jitter);
+    float offset = (.5f / float(TEX_jitter));
+    j0.set(offset, offset);
+    j1.set(scale_X, scale_X).add(offset);
+
+    struct v_aa
+    {
+        Fvector4 p;
+        Fvector2 uv0;
+        Fvector2 uvJ;
+        Fvector2 uv1;
+        Fvector2 uv2;
+        Fvector2 uv3;
+        Fvector4 uv4;
+        Fvector4 uv5;
+    };
+    float smooth = 0.6f;
+    float ddw = smooth / _w;
+    float ddh = smooth / _h;
+
+    VERIFY(sizeof(v_aa) == g_aa_AA->vb_stride);
+    v_aa* pv = (v_aa*)RImplementation.Vertex.Lock(4, g_aa_AA->vb_stride, Offset);
+    pv->p.set(EPS, EPS, EPS, 1.f);
+    pv->uv0.set(p0.x, p0.y);
+    pv->uvJ.set(j0.x, j0.y);
+    pv->uv1.set(p0.x - ddw, p0.y - ddh);
+    pv->uv2.set(p0.x + ddw, p0.y + ddh);
+    pv->uv3.set(p0.x + ddw, p0.y - ddh);
+    pv->uv4.set(p0.x - ddw, p0.y + ddh, 0, 0);
+    pv->uv5.set(0, 0, 0, 0);
+    pv++;
+    pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
+    pv->uv0.set(p0.x, p1.y);
+    pv->uvJ.set(j0.x, j1.y);
+    pv->uv1.set(p0.x - ddw, p1.y - ddh);
+    pv->uv2.set(p0.x + ddw, p1.y + ddh);
+    pv->uv3.set(p0.x + ddw, p1.y - ddh);
+    pv->uv4.set(p0.x - ddw, p1.y + ddh, 0, 0);
+    pv->uv5.set(0, 0, 0, 0);
+    pv++;
+    pv->p.set(float(_w + EPS), EPS, EPS, 1.f);
+    pv->uv0.set(p1.x, p0.y);
+    pv->uvJ.set(j1.x, j0.y);
+    pv->uv1.set(p1.x - ddw, p0.y - ddh);
+    pv->uv2.set(p1.x + ddw, p0.y + ddh);
+    pv->uv3.set(p1.x + ddw, p0.y - ddh);
+    pv->uv4.set(p1.x - ddw, p0.y + ddh, 0, 0);
+    pv->uv5.set(0, 0, 0, 0);
+    pv++;
+    pv->p.set(float(_w + EPS), float(_h + EPS), EPS, 1.f);
+    pv->uv0.set(p1.x, p1.y);
+    pv->uvJ.set(j1.x, j1.y);
+    pv->uv1.set(p1.x - ddw, p1.y - ddh);
+    pv->uv2.set(p1.x + ddw, p1.y + ddh);
+    pv->uv3.set(p1.x + ddw, p1.y - ddh);
+    pv->uv4.set(p1.x - ddw, p1.y + ddh, 0, 0);
+    pv->uv5.set(0, 0, 0, 0);
+    pv++;
+    RImplementation.Vertex.Unlock(4, g_aa_AA->vb_stride);
+    RCache.set_Geometry(g_aa_AA);
+
+    RCache.set_Element(s_accum_direct->E[SE_SUN_LUMINANCE]);
+    RCache.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+    RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
+
+    if (!RImplementation.o.msaa)
+    {
+        RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+        RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+    }
+    else
+    {
+        RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);
+        RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+        if (RImplementation.o.msaa_opt)
+        {
+            RCache.set_Element(s_accum_direct_msaa[0]->E[SE_SUN_LUMINANCE]);
+            RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID | 0x80, 0xff, 0x00);
+            RCache.set_CullMode(CULL_NONE);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+        }
+        else
+        {
+            VERIFY(!"Only optimized MSAA is supported in OpenGL");
+        }
+        RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+    }
 }
 
 void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, const Fmatrix& mShadow)
 {
-    // TODO: Implement Metal accum direct volumetric
+    PIX_EVENT(accum_direct_volumetric);
+
+    if (!need_to_render_sunshafts())
+        return;
+
+    if ((sub_phase != SE_SUN_NEAR) && (sub_phase != SE_SUN_FAR))
+        return;
+
+    phase_vol_accumulator(RCache);
+
+    RCache.set_ColorWriteEnable();
+
+    ref_selement Element = s_accum_direct_volumetric->E[0];
+
+    const bool useMinMaxSMThisFrame = use_minmax_sm_this_frame();
+    if (useMinMaxSMThisFrame)
+        Element = s_accum_direct_volumetric_minmax->E[0];
+
+    {
+        light* fuckingsun = (light*)RImplementation.Lights.sun._get();
+
+        Fvector L_dir, L_clr;
+        L_clr.set(fuckingsun->color.r, fuckingsun->color.g, fuckingsun->color.b);
+        Device.mView.transform_dir(L_dir, fuckingsun->direction);
+        L_dir.normalize();
+
+        RCache.set_Element(Element);
+        if (useMinMaxSMThisFrame || !RImplementation.o.oldshadowcascades)
+        {
+            RCache.set_CullMode(CULL_CCW);
+        }
+        RCache.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+        RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, 0.f);
+        RCache.set_c("m_shadow", mShadow);
+        Fmatrix m_Texgen;
+        m_Texgen.identity();
+        RCache.xforms.set_W(m_Texgen);
+        RCache.xforms.set_V(Device.mView);
+        RCache.xforms.set_P(Device.mProject);
+        float _w = float(Device.dwWidth);
+        float _h = float(Device.dwHeight);
+        float o_w = (.5f / _w);
+        float o_h = (.5f / _h);
+        Fmatrix m_TexelAdjust =
+        {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.5f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.5f + o_w, 0.5f + o_h, 0.0f, 1.0f
+        };
+        m_Texgen.mul(m_TexelAdjust, RCache.xforms.m_wvp);
+        RCache.set_c("m_texgen", m_Texgen);
+
+        float zMin, zMax;
+        if (SE_SUN_NEAR == sub_phase)
+        {
+            zMin = 0;
+            zMax = ps_r2_sun_near;
+        }
+        else
+        {
+            if (RImplementation.o.oldshadowcascades)
+                zMin = ps_r2_sun_near;
+            else
+                zMin = 0;
+            zMax = ps_r2_sun_far;
+        }
+
+        RCache.set_c("volume_range", zMin, zMax, 0.f, 0.f);
+
+        Fvector center_pt;
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMin);
+        Device.mFullTransform.transform(center_pt);
+        zMin = center_pt.z;
+
+        center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMax);
+        Device.mFullTransform.transform(center_pt);
+        zMax = center_pt.z;
+
+        {
+            if (SE_SUN_NEAR == sub_phase)
+                RCache.set_ZFunc(D3DCMP_GREATER);
+            else
+                RCache.set_ZFunc(D3DCMP_ALWAYS);
+        }
+
+        {
+            if (RImplementation.o.oldshadowcascades)
+                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            else
+                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, 0, 16);
+        }
+    }
 }
 } // namespace xray::render::RENDER_NAMESPACE

@@ -8,8 +8,9 @@ void CRenderTarget::u_setrt(CBackend& cmd_list, const ref_rt& _1, const ref_rt& 
     dwHeight[cmd_list.context_id] = 0;
 
     MTL::Texture* mtlColor[3] = {};
+    int slot = 0;
 
-    auto set_rt = [&](u32 index, const ref_rt& rt)
+    auto set_rt = [&](const ref_rt& rt)
     {
         if (!rt) return;
 
@@ -24,13 +25,15 @@ void CRenderTarget::u_setrt(CBackend& cmd_list, const ref_rt& _1, const ref_rt& 
             dwHeight[cmd_list.context_id] = rt->dwHeight;
         }
 
-        cmd_list.set_RT(rt->pRT, index);
-        mtlColor[index] = lookup_mtl_texture(rt->pRT);
+        VERIFY(slot < 3);
+        cmd_list.set_RT(rt->pRT, slot);
+        mtlColor[slot] = lookup_mtl_texture(rt->pRT);
+        slot++;
     };
 
-    set_rt(0, _1);
-    set_rt(1, _2);
-    set_rt(2, _3);
+    set_rt(_1);
+    set_rt(_2);
+    set_rt(_3);
 
     MTL::Texture* mtlDepth = nullptr;
     if (_zb)
@@ -154,5 +157,5 @@ void CRenderTarget::u_setrt(CBackend& cmd_list, u32 W, u32 H, u32 _1, u32 _2, u3
         HW.CreateEncoder(rpd);
         rpd->release();
     }
-}
+    }
 } // namespace xray::render::RENDER_NAMESPACE

@@ -390,7 +390,11 @@ void CHW::CreateEncoder(MTL::RenderPassDescriptor* rpd)
 
     auto* cmdBuffer = static_cast<MTL::CommandBuffer*>(m_currentCmdBuffer);
     if (!cmdBuffer)
+    {
+        rpd->release();
+        m_currentRPD = nullptr;
         return;
+    }
 
     MTL::RenderCommandEncoder* enc = cmdBuffer->renderCommandEncoder(rpd);
     if (!enc)
@@ -401,7 +405,6 @@ void CHW::CreateEncoder(MTL::RenderPassDescriptor* rpd)
     }
     enc->retain();
     m_currentEncoder = enc;
-
     // Set initial viewport from the first color attachment size.
     auto* ca = rpd->colorAttachments()->object(0);
     if (ca && ca->texture())

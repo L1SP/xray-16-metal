@@ -267,7 +267,8 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
     // and "sampler <name> [[sampler(N)]]" in the main0() parameter list.
     // Update the pre-seeded sampler constants with the actual MSL texture/sampler index.
     const char* p = strstr(mslSource, "main0(");
-    if (!p) { Msg("* MSL texture parse: no main0() found"); return; }
+    if (!p)
+        return;
     p += 6;
     int depth = 1;
     const char* end = p;
@@ -277,30 +278,48 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
         else if (*end == ')') depth--;
         if (depth > 0) end++;
     }
-    if (depth != 0) { Msg("* MSL texture parse: unmatched parens"); return; }
+    if (depth != 0) return;
 
     xr_string params(p, end - p);
-    // Find all texture parameters: "texture2d<float> <name> [[texture(N)]]"
-    // and sampler parameters: "sampler <name> [[sampler(N)]]"
+    // Find all texture parameters: "texture2d<float>", "texture3d<float>", "texturecube<float>"
+    // "texturedepth<float>", etc. plus sampler parameters.
     size_t pos = 0;
     while (pos < params.length())
     {
-        // Look for "texture2d" (NOT just "texture" to avoid matching [[texture(N)]] attributes)
-        // and "sampler" keywords (not followed by '(' to avoid [[sampler(N)]])
-        size_t texPos = params.find("texture2d", pos);
-        // For sampler: find "sampler" not followed by '(' (to avoid [[sampler(N)]])
+        // Find ANY texture type keyword (texture2d, texture3d, texturecube, texturedepth, etc.)
+        // but skip [[texture(N)]] attributes which also contain "texture".
+        size_t texPos = xr_string::npos;
+        {
+            size_t tp = params.find("texture", pos);
+            while (tp != xr_string::npos)
+            {
+                // Skip if "texture" is part of [[texture(N)]] attribute (preceded by '[')
+                if (tp > 0 && params[tp - 1] == '[')
+                {
+                    tp = params.find("texture", tp + 7);
+                    continue;
+                }
+                texPos = tp;
+                break;
+            }
+        }
+        // For sampler: find "sampler" type keyword (not [[sampler(N)]] attributes)
         size_t sampPos = xr_string::npos;
         {
             size_t sp = params.find("sampler", pos);
             while (sp != xr_string::npos)
             {
-                // Check if this "sampler" is inside [[sampler(N)]] or is a type keyword
+                // Skip if "sampler" is part of [[sampler(N)]] attribute (preceded by '[')
+                if (sp > 0 && params[sp - 1] == '[')
+                {
+                    sp = params.find("sampler", sp + 7);
+                    continue;
+                }
+                // Also skip past type qualifiers like "sampler2D" or similar
                 size_t next = sp + 7;
-                // Skip past type qualifiers like "sampler2D" or similar
                 char ch = next < params.length() ? params[next] : 0;
                 if (ch != '(' && ch != ')' && ch != ',' && ch != ' ' && ch != '[' && ch != ']')
                 {
-                    // This is part of a longer word like "sampler2D" - skip it
                     sp = params.find("sampler", next);
                     continue;
                 }
@@ -373,6 +392,13 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
             L.index = bindingIdx;
             L.cls = RC_sampler;
             L.program = 0;
+            // Re-sort immediately so the next iteration's table.get()
+            // (which uses lower_bound binary search) finds the correct entry.
+            // The buffer pass above may have appended entries too, so always
+            // sort after adding a new sampler.
+            std::sort(table.table.begin(), table.table.end(),
+                [](const ref_constant& a, const ref_constant& b)
+                { return xr_strcmp(a->name.c_str(), b->name.c_str()) < 0; });
         }
         else
         {

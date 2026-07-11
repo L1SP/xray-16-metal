@@ -520,6 +520,10 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     if (o.sjitter)
         prefix += "#define USE_SJITTER 1\n";
 
+    // Geometry buffer optimization (2 MRT vs 3 MRT)
+    if (o.gbuffer_opt)
+        prefix += "#define GBUFFER_OPTIMIZATION 1\n";
+
     // Per-shader SKIN macro (m_skinning is set by shader_option_skinning()
     // in SkeletonX.cpp before compilation, matching the GL/DX11 backends).
     // Note: We do NOT define SKIN_0 alongside SKIN_NONE here, even though
@@ -642,36 +646,47 @@ static bool glsl_to_spirv(const char* glslSource, glslang_stage_t stage, xr_vect
 static void remap_msl_buffers(xr_string& msl, bool isVertex)
 {
     // Safety pass: ensure no [[buffer(N)]] has N >= 30 (Metal's limit).
-    // With 0-based SPIR-V bindings per resource type, this should be a no-op,
-    // but handle edge cases like storage buffers or argument buffers we don't explicitly bind.
-    unsigned nextBuffer = 0;
+    // First pass: collect all existing buffer indices.
+    std::set<unsigned> existing;
+    std::set<unsigned> over30;
 
-    const char* p = msl.c_str();
-    while ((p = strstr(p, "[[buffer(")) != nullptr)
+    const char* scan = msl.c_str();
+    while ((scan = strstr(scan, "[[buffer(")) != nullptr)
     {
-        const char* numStart = p + 9;
+        const char* numStart = scan + 9;
         char* endp = nullptr;
-        unsigned oldIdx = (unsigned)strtoul(numStart, &endp, 10);
-        if (oldIdx >= 30)
-        {
-            char oldBuf[32], newBuf[32];
-            snprintf(oldBuf, sizeof(oldBuf), "[[buffer(%u)]]", oldIdx);
-            snprintf(newBuf, sizeof(newBuf), "[[buffer(%u)]]", nextBuffer++);
-            size_t rp = 0;
-            size_t afterLast = 0;
-            while ((rp = msl.find(oldBuf, rp)) != xr_string::npos)
-            {
-                msl.replace(rp, strlen(oldBuf), newBuf);
-                rp += strlen(newBuf);
-                afterLast = rp;
-            }
-            p = afterLast > 0 ? msl.c_str() + afterLast : nullptr;
-        }
+        unsigned idx = (unsigned)strtoul(numStart, &endp, 10);
+        if (idx >= 30)
+            over30.insert(idx);
         else
+            existing.insert(idx);
+        scan = numStart;
+    }
+
+    if (over30.empty())
+        return;
+
+    // Assign new indices for each over-30 buffer, avoiding collisions
+    // with existing indices < 30.
+    unsigned nextFree = existing.empty() ? 0 : (*existing.rbegin() + 1);
+    for (unsigned oldIdx : over30)
+    {
+        while (existing.count(nextFree))
+            nextFree++;
+
+        char oldBuf[32], newBuf[32];
+        snprintf(oldBuf, sizeof(oldBuf), "[[buffer(%u)]]", oldIdx);
+        snprintf(newBuf, sizeof(newBuf), "[[buffer(%u)]]", nextFree);
+
+        size_t rp = 0;
+        while ((rp = msl.find(oldBuf, rp)) != xr_string::npos)
         {
-            nextBuffer = oldIdx + 1;
-            p += 10;
+            msl.replace(rp, strlen(oldBuf), newBuf);
+            rp += strlen(newBuf);
         }
+
+        existing.insert(nextFree);
+        nextFree++;
     }
 }
 
@@ -803,16 +818,47 @@ static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string
 
             if (!isVertex)
             {
+                // Map fragment outputs by name to explicit [[color(N)]] locations.
+                // The patch_io_locations() function adds layout(location=N) to each
+                // `out vec4 SV_TargetN` in the GLSL source, but SPIRV-Cross may
+                // enumerate outputs in a different order. We remap by name to ensure
+                // SV_Target0 → [[color(0)]], SV_Target1 → [[color(1)]], etc.,
+                // regardless of SPIRV-Cross enumeration order.
                 spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, &list, &count);
                 for (size_t i = 0; i < count; i++)
-                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationLocation, (unsigned)i);
+                {
+                    uint32_t loc = u32(-1);
+                    pcstr name = list[i].name;
+                    if (name)
+                    {
+                        if (strcmp(name, "SV_Target0") == 0) loc = 0;
+                        else if (strcmp(name, "SV_Target1") == 0) loc = 1;
+                        else if (strcmp(name, "SV_Target2") == 0) loc = 2;
+                        else if (strcmp(name, "SV_Target3") == 0) loc = 3;
+                        else if (strcmp(name, "SV_Target4") == 0) loc = 4;
+                        else if (strcmp(name, "SV_Target5") == 0) loc = 5;
+                        else if (strcmp(name, "SV_Target6") == 0) loc = 6;
+                        else if (strcmp(name, "SV_Target7") == 0) loc = 7;
+                    }
+                    if (loc == u32(-1))
+                        loc = (unsigned)i;
+                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationLocation, loc);
+                }
+            }
+
+            static const spvc_resource_type bufferTypes[] = {
+                SPVC_RESOURCE_TYPE_UNIFORM_BUFFER,
+                SPVC_RESOURCE_TYPE_STORAGE_BUFFER,
+                SPVC_RESOURCE_TYPE_GL_PLAIN_UNIFORM,
+            };
+            for (auto resType : bufferTypes)
+            {
+                spvc_resources_get_resource_list_for_type(resources, resType, &list, &count);
+                for (size_t i = 0; i < count; i++)
+                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
             }
 
             spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &list, &count);
-            for (size_t i = 0; i < count; i++)
-                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
-
-            spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count);
             for (size_t i = 0; i < count; i++)
                 spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
         }

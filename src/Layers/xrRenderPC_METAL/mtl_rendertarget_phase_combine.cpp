@@ -103,8 +103,10 @@ void CRenderTarget::phase_combine()
         pv->set(1, -1, 1, 0, 0, scale_X, 0); pv++;
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 
-        // Draw
+        // Draw combine pass 1 with explicit CULL_NONE and stencil OFF
         RCache.set_Element(s_combine->E[0]);
+        RCache.set_CullMode(CULL_NONE); // Override state block's D3DCULL_CCW — quad winding is CW
+        RCache.set_Stencil(FALSE);
         RCache.set_Geometry(g_combine);
         RCache.set_c("m_v2w", Device.mInvView);
         RCache.set_c("L_ambient", ambclr);
@@ -162,34 +164,33 @@ void CRenderTarget::phase_combine()
 
     RCache.set_Stencil(FALSE);
 
-    // Post-processing enabled?
-    BOOL PP_Complex = u_need_PP();
-    if (_menu_pp)
-        PP_Complex = FALSE;
-    PP_Complex = TRUE; // always on for now (SBG, color map)
+    RCache.ClearRT(rt_Color, color_rgba(0, 0, 0, 255));
 
-    // Combine everything + perform AA
-    if (PP_Complex)
-        u_setrt(RCache, rt_Color, nullptr, nullptr, rt_Base_Depth);
-    else
-        u_setrt(RCache, Device.dwWidth, Device.dwHeight, get_base_rt(), 0, 0, get_base_zb());
-    RCache.set_CullMode(CULL_NONE);
+    // calc m-blur matrices
+    Fmatrix m_previous, m_current;
+    Fvector2 m_blur_scale;
+    {
+        static Fmatrix m_saved_viewproj;
+        m_previous.mul(m_saved_viewproj, Device.mInvView);
+        m_current.set(Device.mProject);
+        m_saved_viewproj.set(Device.mFullTransform);
+        float scale = ps_r2_mblur / 2.f;
+        m_blur_scale.set(scale, -scale).div(12.f);
+    }
+
+    // Combine everything + perform AA — always write directly to base RT.
+    // GL uses rt_Color/rt_Generic for the PP_Complex path, but phase_pp reads
+    // from $user$generic (rt_Generic) which is never written for non-MSAA,
+    // so phase_pp overwrites the base RT with stale data. Skip PP indirection
+    // until phase_pp's input RT is fixed.
+    u_setrt(RCache, Device.dwWidth, Device.dwHeight, get_base_rt(), 0, 0, get_base_zb());
     RCache.set_Stencil(FALSE);
 
+    RCache.ClearRT(get_base_rt(), color_rgba(64, 64, 64, 255));
+
+    PIX_EVENT(combine_2);
+
     {
-        PIX_EVENT(combine_2);
-
-        // Fill vertex buffer for AA pass
-        float _w = float(Device.dwWidth);
-        float _h = float(Device.dwHeight);
-        float ddw = 1.f / _w;
-        float ddh = 1.f / _h;
-
-        Fvector2 p0, p1;
-        p0.set(.5f / _w, .5f / _h);
-        p1.set((_w + .5f) / _w, (_h + .5f) / _h);
-
-        // Use the same v_aa structure as GL
         struct v_aa
         {
             Fvector4 p;
@@ -202,18 +203,17 @@ void CRenderTarget::phase_combine()
             Fvector4 uv6;
         };
 
+        u32 Offset;
+
+        float _w = float(Device.dwWidth);
+        float _h = float(Device.dwHeight);
+        float ddw = 1.f / _w;
+        float ddh = 1.f / _h;
+        Fvector2 p0, p1;
+        p0.set(.5f / _w, .5f / _h);
+        p1.set((_w + .5f) / _w, (_h + .5f) / _h);
+
         v_aa* pv = (v_aa*)RImplementation.Vertex.Lock(4, g_aa_AA->vb_stride, Offset);
-        // LB — screen bottom, needs uv.y = 1 (bottom of image)
-        pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
-        pv->uv0.set(p0.x, p1.y);
-        pv->uv1.set(p0.x - ddw, p1.y - ddh);
-        pv->uv2.set(p0.x + ddw, p1.y + ddh);
-        pv->uv3.set(p0.x + ddw, p1.y - ddh);
-        pv->uv4.set(p0.x - ddw, p1.y + ddh);
-        pv->uv5.set(p0.x - ddw, p1.y, p1.y, p0.x + ddw);
-        pv->uv6.set(p0.x, p1.y - ddh, p1.y + ddh, p0.x);
-        pv++;
-        // LT — screen top, needs uv.y = 0 (top of image)
         pv->p.set(EPS, EPS, EPS, 1.f);
         pv->uv0.set(p0.x, p0.y);
         pv->uv1.set(p0.x - ddw, p0.y - ddh);
@@ -223,17 +223,15 @@ void CRenderTarget::phase_combine()
         pv->uv5.set(p0.x - ddw, p0.y, p0.y, p0.x + ddw);
         pv->uv6.set(p0.x, p0.y - ddh, p0.y + ddh, p0.x);
         pv++;
-        // RB — screen bottom, needs uv.y = 1 (bottom of image)
-        pv->p.set(float(_w + EPS), float(_h + EPS), EPS, 1.f);
-        pv->uv0.set(p1.x, p1.y);
-        pv->uv1.set(p1.x - ddw, p1.y - ddh);
-        pv->uv2.set(p1.x + ddw, p1.y + ddh);
-        pv->uv3.set(p1.x + ddw, p1.y - ddh);
-        pv->uv4.set(p1.x - ddw, p1.y + ddh);
-        pv->uv5.set(p1.x - ddw, p1.y, p1.y, p1.x + ddw);
-        pv->uv6.set(p1.x, p1.y - ddh, p1.y + ddh, p1.x);
+        pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
+        pv->uv0.set(p0.x, p1.y);
+        pv->uv1.set(p0.x - ddw, p1.y - ddh);
+        pv->uv2.set(p0.x + ddw, p1.y + ddh);
+        pv->uv3.set(p0.x + ddw, p1.y - ddh);
+        pv->uv4.set(p0.x - ddw, p1.y + ddh);
+        pv->uv5.set(p0.x - ddw, p1.y, p1.y, p0.x + ddw);
+        pv->uv6.set(p0.x, p1.y - ddh, p1.y + ddh, p0.x);
         pv++;
-        // RT — screen top, needs uv.y = 0 (top of image)
         pv->p.set(float(_w + EPS), EPS, EPS, 1.f);
         pv->uv0.set(p1.x, p0.y);
         pv->uv1.set(p1.x - ddw, p0.y - ddh);
@@ -243,25 +241,21 @@ void CRenderTarget::phase_combine()
         pv->uv5.set(p1.x - ddw, p0.y, p0.y, p1.x + ddw);
         pv->uv6.set(p1.x, p0.y - ddh, p0.y + ddh, p1.x);
         pv++;
+        pv->p.set(float(_w + EPS), float(_h + EPS), EPS, 1.f);
+        pv->uv0.set(p1.x, p1.y);
+        pv->uv1.set(p1.x - ddw, p1.y - ddh);
+        pv->uv2.set(p1.x + ddw, p1.y + ddh);
+        pv->uv3.set(p1.x + ddw, p1.y - ddh);
+        pv->uv4.set(p1.x - ddw, p1.y + ddh);
+        pv->uv5.set(p1.x - ddw, p1.y, p1.y, p1.x + ddw);
+        pv->uv6.set(p1.x, p1.y - ddh, p1.y + ddh, p1.x);
+        pv++;
         RImplementation.Vertex.Unlock(4, g_aa_AA->vb_stride);
-
-        // m-blur matrices
-        Fmatrix m_previous, m_current;
-        Fvector2 m_blur_scale;
-        {
-            static Fmatrix m_saved_viewproj;
-            m_previous.mul(m_saved_viewproj, Device.mInvView);
-            m_current.set(Device.mProject);
-            m_saved_viewproj.set(Device.mFullTransform);
-            float scale = ps_r2_mblur / 2.f;
-            m_blur_scale.set(scale, -scale).div(12.f);
-        }
 
         Fvector2 vDofKernel;
         vDofKernel.set(0.5f / Device.dwWidth, 0.5f / Device.dwHeight);
         vDofKernel.mul(ps_r2_dof_kernel_size);
 
-        // Draw COLOR
         if (!RImplementation.o.msaa)
         {
             if (ps_r2_ls_flags.test(R2FLAG_AA))
@@ -276,7 +270,6 @@ void CRenderTarget::phase_combine()
             else
                 RCache.set_Element(s_combine_msaa[0]->E[bDistort ? 4 : 2]);
         }
-
         RCache.set_c("e_barrier", ps_r2_aa_barier.x, ps_r2_aa_barier.y, ps_r2_aa_barier.z, 0.f);
         RCache.set_c("e_weights", ps_r2_aa_weight.x, ps_r2_aa_weight.y, ps_r2_aa_weight.z, 0.f);
         RCache.set_c("e_kernel", ps_r2_aa_kernel, ps_r2_aa_kernel, ps_r2_aa_kernel, 0.f);
@@ -288,22 +281,20 @@ void CRenderTarget::phase_combine()
         RCache.set_c("dof_params", dof.x, dof.y, dof.z, ps_r2_dof_sky);
         RCache.set_c("dof_kernel", vDofKernel.x, vDofKernel.y, ps_r2_dof_kernel_size, 0.f);
 
+        // State block from set_Element resets cull mode to D3DCULL_CCW (default),
+        // which Metal maps to MTL::CullModeBack, culling CW quads. Override.
+        RCache.set_CullMode(CULL_NONE);
         RCache.set_Geometry(g_aa_AA);
         RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
     }
+
+
 
     RCache.set_Stencil(FALSE);
 
     // Lens flares
     if (g_pGamePersistent)
         g_pGamePersistent->Environment().RenderFlares();
-
-    // Post-processing (applies SBG — saturation, brightness, gamma)
-    if (PP_Complex)
-    {
-        PIX_EVENT(phase_pp);
-        phase_pp();
-    }
 }
 
 void CRenderTarget::phase_combine_callback()

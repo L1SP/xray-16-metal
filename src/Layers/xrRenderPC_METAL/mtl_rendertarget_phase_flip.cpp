@@ -14,55 +14,49 @@ void CRenderTarget::phase_flip()
         return;
     }
 
-    float gamma, brightness, contrast;
-    gamma = ps_gamma; brightness = ps_brightness; contrast = ps_contrast;
-
+    // Source = get_base_rt() (rt_Base) — where the menu/scene was rendered
+    // (with FLIP_VERTEX_Y=true, so content is upside-down).
+    // Destination = drawable texture (to be presented on screen).
+    //
     const u32 baseHandle = get_base_rt();
+    auto* srcTex = lookup_mtl_texture(baseHandle);
     auto* dstTex = lookup_mtl_texture(HW.m_drawableTexHandle);
-    if (!baseHandle || !dstTex)
+    if (!srcTex || !dstTex)
     {
-        Msg("! phase_flip: baseHandle=%u dstTex=%p", baseHandle, (void*)dstTex);
+        Msg("! phase_flip: tex lookup failed (base=%u drawable=%u)", baseHandle, HW.m_drawableTexHandle);
         return;
     }
 
     if (!m_gamma_render_pso)
     {
-        Msg("! phase_flip: no gamma PSO");
+        Msg("! phase_flip: no gamma PSO, falling back to blit");
+        // Fallback: raw blit (no gamma, no flip — image will be upside down)
+        auto* cmdBuffer = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer);
+        if (!cmdBuffer) return;
+        auto* blit = cmdBuffer->blitCommandEncoder();
+        if (blit)
+        {
+            const auto w = std::min(srcTex->width(), dstTex->width());
+            const auto h = std::min(srcTex->height(), dstTex->height());
+            blit->copyFromTexture(srcTex, 0, 0, MTL::Origin(0, 0, 0),
+                MTL::Size(w, h, 1), dstTex, 0, 0, MTL::Origin(0, 0, 0));
+            blit->endEncoding();
+        }
         return;
     }
 
-    auto* oldCmdBuffer = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer);
-    if (oldCmdBuffer)
-    {
-        oldCmdBuffer->commit();
-        oldCmdBuffer->release(); // balance BeginScene's retain
-    }
-    HW.m_currentCmdBuffer = nullptr;
-    HW.m_currentEncoder = nullptr;
-    HW.m_currentRPD = nullptr;
+    float gamma, brightness, contrast;
+    gamma = ps_gamma; brightness = ps_brightness; contrast = ps_contrast;
 
-    auto* cmdQueue = static_cast<MTL::CommandQueue*>(HW.m_cmdQueue);
-    auto* cmdBuffer = cmdQueue->commandBuffer();
+    // Use the gamma PSO on the SAME command buffer (no commit needed).
+    // The render encoder to rt_Base was already ended by Present's EndEncoding(),
+    // so tile memory is flushed and we can safely sample rt_Base.
+    auto* cmdBuffer = static_cast<MTL::CommandBuffer*>(HW.m_currentCmdBuffer);
     if (!cmdBuffer)
-    {
-        Msg("! phase_flip: new cmd buffer creation failed");
         return;
-    }
-    cmdBuffer->retain();
-    HW.m_currentCmdBuffer = cmdBuffer;
-
-    auto* srcTex = lookup_mtl_texture(baseHandle);
-    auto* interTex = lookup_mtl_texture(rt_Generic_0->pRT);
-    if (!srcTex || !interTex)
-    {
-        Msg("! phase_flip: tex lookup failed (base=%u gen0=%u)", baseHandle, rt_Generic_0->pRT);
-        return;
-    }
-
-    // ── Render gamma pass into rt_Generic_0 ─────────────────────────────────
 
     MTL::RenderPassDescriptor* rpd = MTL::RenderPassDescriptor::alloc()->init();
-    rpd->colorAttachments()->object(0)->setTexture(interTex);
+    rpd->colorAttachments()->object(0)->setTexture(dstTex);
     rpd->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionDontCare);
     rpd->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
 
@@ -77,7 +71,6 @@ void CRenderTarget::phase_flip()
     enc->setFragmentTexture(srcTex, 0);
     enc->setFragmentSamplerState(get_default_sampler(), 0);
 
-    // Uniforms: Stalker GammaParams struct (gamma, brightness, contrast)
     struct { float gamma, brightness, contrast; } gp = { gamma, brightness, contrast };
     enc->setFragmentBytes(&gp, sizeof(gp), 0);
 
@@ -86,19 +79,5 @@ void CRenderTarget::phase_flip()
 
     enc->endEncoding();
     rpd->release();
-
-    // ── Blit gamma-corrected rt_Generic_0 to the Metal drawable ─────────────
-
-    {
-        auto* blit = cmdBuffer->blitCommandEncoder();
-        if (blit)
-        {
-            const auto w = std::min(interTex->width(), dstTex->width());
-            const auto h = std::min(interTex->height(), dstTex->height());
-            blit->copyFromTexture(interTex, 0, 0, MTL::Origin(0, 0, 0),
-                MTL::Size(w, h, 1), dstTex, 0, 0, MTL::Origin(0, 0, 0));
-            blit->endEncoding();
-        }
-    }
 }
 } // namespace xray::render::RENDER_NAMESPACE

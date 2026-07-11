@@ -584,7 +584,13 @@ public:
         HW.get_context(CHW::IMM_CTX_ID)->ExecuteCommandList(pCommandList, false);
         _RELEASE(pCommandList);
 #elif defined(USE_METAL)
-        // METAL TODO: implement command list submission
+        // Metal: no-op. Unlike DX11, Metal has no deferred contexts.
+        // The encoder is tied to its MTLRenderPassDescriptor and is
+        // naturally ended by the next u_setrt() / ClearRT() / ClearZB()
+        // call. Calling HW.EndEncoding() here would prematurely kill
+        // the global m_currentEncoder for ALL contexts, causing
+        // subsequent Render() calls to skip (null encoder).
+        // See mtlR_Backend_Runtime.h for the encoder-lifecycle safety net.
 #endif
     }
 

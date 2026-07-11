@@ -41,9 +41,9 @@ private:
 
     Lock render_lock{};
 public:
-#if defined(USE_DX11) || defined(USE_METAL)
+#if defined(USE_DX11)
     typedef u64 occq_result;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
     typedef u32 occq_result;
 #else
 #   error No graphics API selected or enabled!

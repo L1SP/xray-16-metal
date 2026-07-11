@@ -510,7 +510,7 @@ void CRenderTarget::phase_bloom()
             // Fill vertex buffer
             v_filter* pv = (v_filter*)RImplementation.Vertex.Lock(4, g_bloom_filter->vb_stride, Offset);
 
-#if defined(USE_DX11) || defined(USE_METAL)
+#if defined(USE_DX11)
             // 0 - LB
             pv->p.set(EPS, float(_h + EPS), EPS, 1.f);
             pv->uv0.set(a_0.x, 1 + a_0.y, 0, 0);
@@ -558,7 +558,7 @@ void CRenderTarget::phase_bloom()
             pv->uv6.set(1 + a_6.x, a_6.y, a_6.z, 1 + a_6.w);
             pv->uv7.set(1 + a_7.x, a_7.y, a_7.z, 1 + a_7.w);
             pv++;
-#elif defined(USE_OGL)
+#elif defined(USE_OGL) || defined(USE_METAL)
             // 1 - LT
             pv->p.set(EPS, EPS, EPS, 1.f);
             pv->uv0.set(a_0.x, a_0.y, 0, 0);
