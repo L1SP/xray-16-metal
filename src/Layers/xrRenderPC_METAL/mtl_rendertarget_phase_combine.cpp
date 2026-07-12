@@ -178,15 +178,14 @@ void CRenderTarget::phase_combine()
         m_blur_scale.set(scale, -scale).div(12.f);
     }
 
-    // Combine everything + perform AA — always write directly to base RT.
-    // GL uses rt_Color/rt_Generic for the PP_Complex path, but phase_pp reads
-    // from $user$generic (rt_Generic) which is never written for non-MSAA,
-    // so phase_pp overwrites the base RT with stale data. Skip PP indirection
-    // until phase_pp's input RT is fixed.
+    // Combine everything + perform AA — write directly to base RT.
+    // phase_pp reads $user$generic (rt_Generic) which creates a GPU hazard
+    // on Apple Silicon TBDR (read-after-write within same command buffer).
+    // Skip PP — gamma correction is applied by phase_flip() via its PSO pass.
+    // For non-MSAA, rt_Generic_0_r == rt_Generic_0 (same CRT object), so the
+    // forward pass already wrote directly to the texture that s_image samples.
     u_setrt(RCache, Device.dwWidth, Device.dwHeight, get_base_rt(), 0, 0, get_base_zb());
     RCache.set_Stencil(FALSE);
-
-    RCache.ClearRT(get_base_rt(), color_rgba(64, 64, 64, 255));
 
     PIX_EVENT(combine_2);
 
@@ -287,8 +286,6 @@ void CRenderTarget::phase_combine()
         RCache.set_Geometry(g_aa_AA);
         RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
     }
-
-
 
     RCache.set_Stencil(FALSE);
 

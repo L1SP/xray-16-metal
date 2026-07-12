@@ -5,6 +5,15 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+// Map of sampler name → vertex-stage binding index for Metal.
+// Filled during MSL shader compilation (setup_constants_from_msl with RC_dest_vertex).
+xr_map<xr_string, u32> s_vsTextureBindings;
+
+// Maps PS stage index (samp.index) → VS binding index (vs.index).
+// Populated in Blender_Recorder_MTL.cpp::r_Pass() after merge+workaround.
+// Used by CTexture::apply_normal() to bind vertex textures at the correct [[texture(N)]].
+xr_map<u32, u32> s_psStageToVsStage;
+
 static class cl_sampler : public R_constant_setup
 {
     void setup(CBackend& cmd_list, R_constant* C) override
@@ -369,10 +378,19 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
         ref_constant C = table.get(name.c_str());
         if (C && C->type == RC_sampler)
         {
-            // Update the sampler location to match MSL texture/sampler index
+            // Set common samp.index for merge() compatibility (shared between VS/PS tables).
+            // VS stage also gets a separate vs.index so apply_normal() can use the correct
+            // Metal [[texture(N)]] binding per stage.
+            // The Blender_Recorder_MTL workaround restores samp.index from ps.index
+            // after the VS merge overwrites it — see Blender_Recorder_MTL.cpp:77-79.
             C->samp.location = bindingIdx;
             C->samp.index = bindingIdx;
-            // Also update ps location if this is a pixel shader texture
+            if (destination & RC_dest_vertex)
+            {
+                C->vs.location = bindingIdx;
+                C->vs.index = bindingIdx;
+                s_vsTextureBindings[name] = bindingIdx;
+            }
             if (destination & RC_dest_pixel)
             {
                 C->ps.location = bindingIdx;
@@ -387,11 +405,22 @@ void setup_constants_from_msl(R_constant_table& table, pcstr mslSource, u32 dest
             C->destination = RC_dest_sampler;
             C->type = RC_sampler;
             C->handler = &binder_sampler;
-            R_constant_load& L = C->samp;
-            L.location = bindingIdx;
-            L.index = bindingIdx;
-            L.cls = RC_sampler;
-            L.program = 0;
+            // Set samp.index for merge() compatibility; also set vs/ps for stage-specific binding
+            C->samp.location = bindingIdx;
+            C->samp.index = bindingIdx;
+            C->samp.cls = RC_sampler;
+            C->samp.program = 0;
+            if (destination & RC_dest_vertex)
+            {
+                C->vs.location = bindingIdx;
+                C->vs.index = bindingIdx;
+                s_vsTextureBindings[name] = bindingIdx;
+            }
+            if (destination & RC_dest_pixel)
+            {
+                C->ps.location = bindingIdx;
+                C->ps.index = bindingIdx;
+            }
             // Re-sort immediately so the next iteration's table.get()
             // (which uses lower_bound binary search) finds the correct entry.
             // The buffer pass above may have appended entries too, so always

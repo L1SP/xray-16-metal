@@ -524,6 +524,32 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     if (o.gbuffer_opt)
         prefix += "#define GBUFFER_OPTIMIZATION 1\n";
 
+    // Branching (HW caps)
+    if (HW.Caps.raster_major >= 3)
+        prefix += "#define USE_BRANCHING 1\n";
+
+    // Vertex texture fetch (VTF)
+    if (HW.Caps.geometry.bVTF)
+        prefix += "#define USE_VTF 1\n";
+
+    // Feature options matching GL backend (shader_sources_manager::Apply)
+    if (o.Tshadows)
+        prefix += "#define USE_TSHADOWS 1\n";
+    if (o.mblur)
+        prefix += "#define USE_MBLUR 1\n";
+    if (o.sunfilter)
+        prefix += "#define USE_SUNFILTER 1\n";
+    if (o.sunstatic)
+        prefix += "#define USE_R2_STATIC_SUN 1\n";
+    if (o.forceskinw)
+        prefix += "#define SKIN_COLOR 1\n";
+    if (o.ssao_blur_on)
+        prefix += "#define USE_SSAO_BLUR 1\n";
+    if (o.dx11_sm4_1)
+        prefix += "#define SM_4_1 1\n";
+    if (o.minmax_sm)
+        prefix += "#define USE_MINMAX_SM 1\n";
+
     // Per-shader SKIN macro (m_skinning is set by shader_option_skinning()
     // in SkeletonX.cpp before compilation, matching the GL/DX11 backends).
     // Note: We do NOT define SKIN_0 alongside SKIN_NONE here, even though
@@ -805,6 +831,7 @@ static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string
             spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_VERSION, 30000);
             spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, true);
             spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, true);
+            spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_ENABLE_DECORATION_BINDING, true);
             spvc_compiler_install_compiler_options(compiler, opts);
         }
     }
@@ -846,21 +873,28 @@ static bool spirv_to_msl(const unsigned int* spirv, size_t word_count, xr_string
                 }
             }
 
+            // Assign sequential binding indices across ALL buffer resource types.
+            // Each gets a unique [[buffer(N)]] index — no overlap between UB, SSBO, and plain.
             static const spvc_resource_type bufferTypes[] = {
                 SPVC_RESOURCE_TYPE_UNIFORM_BUFFER,
                 SPVC_RESOURCE_TYPE_STORAGE_BUFFER,
                 SPVC_RESOURCE_TYPE_GL_PLAIN_UNIFORM,
             };
+            u32 bindingIdx = 0;
             for (auto resType : bufferTypes)
             {
                 spvc_resources_get_resource_list_for_type(resources, resType, &list, &count);
                 for (size_t i = 0; i < count; i++)
-                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
+                    spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, bindingIdx++);
             }
 
+            // Assign texture/sampler bindings starting after buffer uniforms.
+            // [[texture(N)]] and [[sampler(N)]] are separate namespaces from [[buffer(N)]],
+            // but keeping them distinct avoids confusion.
+            u32 texBinding = 0;
             spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &list, &count);
             for (size_t i = 0; i < count; i++)
-                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, (unsigned)i);
+                spvc_compiler_set_decoration(compiler, list[i].id, SpvDecorationBinding, texBinding++);
         }
     }
 

@@ -169,6 +169,7 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 }
 
 extern xr_map<u32, MTL::Texture*> s_mtlTextures;
+extern xr_map<u32, u32> s_psStageToVsStage;
 void CTexture::apply_normal(CBackend& cmd_list, u32 dwStage) const
 {
     if (!pSurface)
@@ -178,9 +179,27 @@ void CTexture::apply_normal(CBackend& cmd_list, u32 dwStage) const
         return;
     if (auto* enc = static_cast<MTL::RenderCommandEncoder*>(HW.m_currentEncoder))
     {
-        enc->setFragmentTexture(mtlTex, dwStage);
-        if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
-            enc->setFragmentSamplerState(sampler, dwStage);
+        if (dwStage >= CTexture::rstVertex)
+        {
+            // VS-only (VTF) texture — bind only to vertex stage
+            u32 vsStage = dwStage - CTexture::rstVertex;
+            enc->setVertexTexture(mtlTex, vsStage);
+            if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
+                enc->setVertexSamplerState(sampler, vsStage);
+        }
+        else
+        {
+            // PS texture (may also be used by VS)
+            enc->setFragmentTexture(mtlTex, dwStage);
+            if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
+                enc->setFragmentSamplerState(sampler, dwStage);
+
+            auto vsIt = s_psStageToVsStage.find(dwStage);
+            u32 vsStage = (vsIt != s_psStageToVsStage.end()) ? vsIt->second : dwStage;
+            enc->setVertexTexture(mtlTex, vsStage);
+            if (auto* sampler = static_cast<MTL::SamplerState*>(HW.m_defaultSampler))
+                enc->setVertexSamplerState(sampler, vsStage);
+        }
     }
 }
 

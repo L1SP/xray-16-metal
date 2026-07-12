@@ -74,9 +74,22 @@ void CBlender_Compile::r_Pass(LPCSTR _vs, LPCSTR _gs, LPCSTR _ps, bool bFog, BOO
     // breaking the MSL [[texture(N)]] binding indices set by setup_constants_from_msl for the PS.
     // Restore: for samplers where ps.index was set from MSL (valid, not 0xFFFF),
     // copy it back to samp.index so texture stage assignment uses the MSL index.
+    // For VS-only samplers (used by VTF), offset by rstVertex to avoid PS conflicts.
     for (auto& C : ctable.table)
-        if (C->type == RC_sampler && C->ps.index != 0xFFFF)
-            C->samp.index = C->ps.index;
+        if (C->type == RC_sampler)
+        {
+            if (C->ps.index != 0xFFFF)
+                C->samp.index = C->ps.index;
+            else if (C->vs.index != 0xFFFF)
+                C->samp.index = C->vs.index + CTexture::rstVertex;
+        }
+
+    // Build: PS stage → VS binding index, used by apply_normal() for correct per-stage binding.
+    extern xr_map<u32, u32> s_psStageToVsStage;
+    s_psStageToVsStage.clear();
+    for (auto& C : ctable.table)
+        if (C->type == RC_sampler && C->ps.index != 0xFFFF && C->vs.index != 0xFFFF)
+            s_psStageToVsStage[C->samp.index] = C->vs.index;
 
     if (0 == xr_stricmp(_ps, "null"))
     {

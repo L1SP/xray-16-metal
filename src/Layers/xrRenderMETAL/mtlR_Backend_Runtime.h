@@ -144,10 +144,16 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
         }
         auto* da = rpd->depthAttachment();
         if (da && da->texture())
-            key.depthPF = static_cast<u32>(da->texture()->pixelFormat());
-        auto* sa = rpd->stencilAttachment();
-        if (sa && sa->texture())
-            key.stencilPF = static_cast<u32>(sa->texture()->pixelFormat());
+        {
+            auto fmt = da->texture()->pixelFormat();
+            key.depthPF = static_cast<u32>(fmt);
+            // Stencil pixel format matches depth when depth has stencil component
+            if (fmt == MTL::PixelFormatDepth24Unorm_Stencil8 ||
+                fmt == MTL::PixelFormatDepth32Float_Stencil8)
+            {
+                key.stencilPF = static_cast<u32>(fmt);
+            }
+        }
         if (auto* tex = rpd->colorAttachments()->object(0)->texture())
             key.sampleCount = static_cast<u32>(tex->sampleCount());
     }
@@ -180,10 +186,18 @@ inline MTL::RenderPipelineState* get_or_create_pipeline(u32 vsID, u32 psID, u32 
         }
         auto* da = rpd->depthAttachment();
         if (da && da->texture())
-            psoDesc->setDepthAttachmentPixelFormat(da->texture()->pixelFormat());
-        auto* sa = rpd->stencilAttachment();
-        if (sa && sa->texture())
-            psoDesc->setStencilAttachmentPixelFormat(sa->texture()->pixelFormat());
+        {
+            auto fmt = da->texture()->pixelFormat();
+            psoDesc->setDepthAttachmentPixelFormat(fmt);
+            // MTL requires stencilAttachmentPixelFormat to match the depth-stencil
+            // texture's format when depth-buffer has stencil component (e.g. D24S8).
+            // Without this, stencil writes are ignored and stencil test always passes.
+            if (fmt == MTL::PixelFormatDepth24Unorm_Stencil8 ||
+                fmt == MTL::PixelFormatDepth32Float_Stencil8)
+            {
+                psoDesc->setStencilAttachmentPixelFormat(fmt);
+            }
+        }
     }
 
     // Configure blend state and write mask for all color attachments

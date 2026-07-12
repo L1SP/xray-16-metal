@@ -423,8 +423,11 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                 }
 
                 // Compute per-slice data size
-                // NOTE: texture.size(Level) returns the size of ONE layer/face at this level (not all slices combined)
+                // NOTE: texture.size(Level) returns per-slice size for 2D/cube/array,
+                // but for TARGET_3D it returns the total volume size (all depth slices combined).
                 size_t sliceSize = srcSize;
+                if (is3D && levelExtent.z > 1)
+                    sliceSize /= static_cast<size_t>(levelExtent.z);
                 size_t numBlockRows = static_cast<size_t>((h + bdy - 1) / bdy);
                 size_t expectedSize = static_cast<size_t>(bytesPerRow) * numBlockRows;
                 // Fallback: if our calculation doesn't match the actual per-slice size,
@@ -444,8 +447,13 @@ u32 CRender::texture_load(pcstr fRName, u32& ret_msize, int& ret_desc)
                 if (bytesPerRow < minBPR)
                 {
                     bytesPerRow = minBPR;
-                    if (is3D)
-                        bytesPerImage = minBPR * static_cast<NS::UInteger>((h + bdy - 1) / bdy);
+                }
+
+                // Always set bytesPerImage for 3D textures (compressed path already sets it)
+                if (is3D && bytesPerImage == 0)
+                {
+                    int numBlocksY_full = (static_cast<int>(levelExtent.y) + bdy - 1) / bdy;
+                    bytesPerImage = bytesPerRow * static_cast<NS::UInteger>(numBlocksY_full);
                 }
 
                 mtlTex->replaceRegion(region, static_cast<NS::UInteger>(level), slice, srcData, bytesPerRow, bytesPerImage);
