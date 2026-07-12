@@ -1,3 +1,5 @@
+Stopped developing Metal implementation and archived this fork to focus on NVRHI branch.
+
 <div align="center">
   <p>
     <a href="https://github.com/OpenXRay">
