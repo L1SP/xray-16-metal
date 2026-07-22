@@ -1,4 +1,4 @@
-Stopped developing Metal implementation and archived this fork to focus on NVRHI branch.
+Stopped developing Metal implementation and archived this fork to focus on NVRHI branch. All work on metal is in dev branch, but the repo is now only used to create PRs
 
 <div align="center">
   <p>
